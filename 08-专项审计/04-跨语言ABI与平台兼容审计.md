@@ -2451,7 +2451,7 @@ total distinct (class,method) pairs: 211
 | `BINDING_COMBINE_FUNCTION_IMPLEMENTATION` 生成名 | `BindingMacro.h:9` | 211 个 `__X_YImplementation` | 211/211 有对应，**无缺口** | `pwsh` 抽取脚本，`missing = 0` |
 | `LogBridgeInitializeLeanCLR` | `FunctionMacro.h:50`（`#if WITH_LEANCLR`） | 不在 `COMMON/NATIVE_BRIDGE_METHODS` 里，**无 typedef**，靠 `FLeanCLRDomain.cpp:69-75` 用**类名+方法名**直接解析 | 非死代码（LeanCLR 专用入口） | `grep -n "InitializeLeanCLR" Source/ Script/` → 定义 `FunctionMacro.h:50`、调用 `FLeanCLRDomain.cpp:72`、C# `LogBridge.cs:47` |
 | `FUNCTION_LOG_BRIDGE_LOG_LEANCLR` | `FunctionMacro.h:52` | `LogBridge.cs:28` 的 `[DllImport] LogLeanCLR` | 有对应 | `FLeanCLRDomain.cpp:884-887` 显式 `RegisterPInvoke(... + FUNCTION_LOG_BRIDGE_LOG_LEANCLR)` |
-| `FUNCTION_HANDLE_DATA_GET_OBJECT_POINTER(S)` / `FUNCTION_HANDLE_DATA_ALLOC` | `FunctionMacro.h:39/43`（复数 `:41` **已于本轮删除**） | `HandleData.GetObjectPointer/Alloc`（复数 `GetObjectPointers` 已删除） | **LeanCLR 专用**，在 `LEANCLR_INTEROP_BRIDGE_METHODS`（`FLeanCLRDomain.h:195-197`）里，**不在** `IScriptTypes.h` 的通用表里。〔**更正（本轮）**：该表实际只有 `GetObjectPointer`（`:196`）+ `Alloc`（`:197`）两项，复数 `..._POINTERS` **从未进入任何桥表** → 故为死宏并已删除；单数版不受影响〕 | `grep -n "HandleDataGetObjectPointer" Source/` → 仅 `FLeanCLRDomain.h:196` 定义 + `FLeanCLRDomain.cpp:125/155/167/196/417` 使用 |
+| `FUNCTION_HANDLE_DATA_GET_OBJECT_POINTER(S)` / `FUNCTION_HANDLE_DATA_ALLOC` | `FunctionMacro.h:39/43`（复数 `:41` **已于提交 `4f351f12` 删除**） | `HandleData.GetObjectPointer/Alloc`（复数 `GetObjectPointers` 已删除） | **LeanCLR 专用**，在 `LEANCLR_INTEROP_BRIDGE_METHODS`（`FLeanCLRDomain.h:195-197`）里，**不在** `IScriptTypes.h` 的通用表里。〔**更正（提交 `4f351f12`）**：该表实际只有 `GetObjectPointer`（`:196`）+ `Alloc`（`:197`）两项，复数 `..._POINTERS` **从未进入任何桥表** → 故为死宏并已删除；单数版不受影响〕 | `grep -n "HandleDataGetObjectPointer" Source/` → 仅 `FLeanCLRDomain.h:196` 定义 + `FLeanCLRDomain.cpp:125/155/167/196/417` 使用 |
 
 **结论：表 C 无缺口**（C++ 侧的桥接入口与绑定注册都能在 C# 侧找到对应；不存在"导出但没人用"的死导出）。
 
@@ -2805,12 +2805,12 @@ void FCoreCLRLog::ErrorWriter(const char_t* InMessage)
 | 符号 | 声明位置 | grep 命中数 | 判定 | 证据 |
 |---|---|---|---|---|
 | `IManagedHandleToObject` / `IManagedHandleFromObject` | `IManagedHandle.h:32-40` | 多处 | 使用中 | `grep -rn "IManagedHandleToObject" Source/` |
-| ~~`FUNCTION_HANDLE_DATA_GET_OBJECT_POINTERS`~~ | ~~`FunctionMacro.h:41`~~ | 1 → **0（本轮已删除）** | **已确认死宏并删除**（原"置信度 低：可能给外部用户工程用"的猜测**已排除**：`HandleData` 属 `Interop` 运行时程序集，该 API 的语义"批量句柄→裸指针"只有 C++ 反调用路径才有意义） | `grep -rn "HANDLE_DATA_GET_OBJECT_POINTERS" Source/` → 只有 `FunctionMacro.h:41`；对应 C# `HandleData.cs:118 GetObjectPointers` 在 `Script/` 内也无调用者 → 删除后 0 命中 |
+| ~~`FUNCTION_HANDLE_DATA_GET_OBJECT_POINTERS`~~ | ~~`FunctionMacro.h:41`~~ | 1 → **0（已删除，提交 `4f351f12`）** | **已确认死宏并删除**（原"置信度 低：可能给外部用户工程用"的猜测**已排除**：`HandleData` 属 `Interop` 运行时程序集，该 API 的语义"批量句柄→裸指针"只有 C++ 反调用路径才有意义） | `grep -rn "HANDLE_DATA_GET_OBJECT_POINTERS" Source/` → 只有 `FunctionMacro.h:41`；对应 C# `HandleData.cs:118 GetObjectPointers` 在 `Script/` 内也无调用者 → 删除后 0 命中 |
 | `PLUGIN_TEMPLATE_OVERRIDE` / `PLUGIN_TEMPLATE_DYNAMIC` | `Macro.h:9/11` | 见下 | 待确认 | `grep -rn "PLUGIN_TEMPLATE_OVERRIDE\|PLUGIN_TEMPLATE_DYNAMIC" Source/` |
 | `PLACEHOLDER` | `Macro.h:127` | 用作结构化绑定占位（`FClassReflection.cpp:485` 等） | 使用中 | — |
 | 本专项未新增死代码判定 | — | — | — | 死代码主清单属 08-专项审计的其它报告；本报告只记录在 ABI 核对过程中**顺带发现**的条目，避免与专责报告重复 |
 
-> 说明：本次专项的 grep 精力集中在"符号是否成对存在"上（表 C/表 D），未做全插件死代码普查——那属于 `08-专项审计` 中"死代码"专责报告的范围。上表的 `HandleData.GetObjectPointers` 是唯一在 ABI 核对过程中确认为"两侧都无调用者"的候选。**本轮已闭环**：该候选经专责报告复核确认为死桥（判据 = 无 `Op(...)` 表项，而非 C# 侧引用数 —— 见 `08-专项审计/01` 的 F-DEAD-002「判据修正」），其宏与 C# 方法**均已删除**。
+> 说明：本次专项的 grep 精力集中在"符号是否成对存在"上（表 C/表 D），未做全插件死代码普查——那属于 `08-专项审计` 中"死代码"专责报告的范围。上表的 `HandleData.GetObjectPointers` 是唯一在 ABI 核对过程中确认为"两侧都无调用者"的候选。**已闭环**：该候选经专责报告复核确认为死桥（判据 = 无 `Op(...)` 表项，而非 C# 侧引用数 —— 见 `08-专项审计/01` 的 F-DEAD-002「判据修正」），其宏与 C# 方法**均已删除**。
 
 ---
 

@@ -2,6 +2,7 @@
 
 > 本报告 30 条发现的**严重度见各 Finding 的「复核结论」字段**（确认 **19**、部分确认 **9**、证伪 **2**、无法验证 **0**；含 4 条判定为 `撤销（非缺陷）`、15 条级别调整）。
 > **新增关键依据**：本机 UE 5.6 引擎源码已可直接引用（`Engine\Source`），因此原先所有"引擎侧假设"（`FScriptArrayHelper` 是否析构、`FScriptXxx::Empty`/`RemoveAt` 是否维护哈希、`TArray::Reset` 语义、容器与 `T*` 的布局等价性）**已全部落地为可核对的行号**，见 §0.3 与各条的 `复核证据` 字段。
+> **处置更新（修复提交 `492ce5f7`）**：`F-HLP-023` 已修复（修复落在**调用侧**：`FRegisterMap`（`FindKey`/`Find`/`Get`/`GetEnumeratorKey`/`GetEnumeratorValue`）、`FRegisterArray::Get`、`FRegisterSet::GetEnumerator` 共 **7 处**取值实现改为先判 helper 是否命中，未命中回退到该提交新增的 `FPropertyDescriptor::GetDefaultValue`，不再把 `nullptr` 交给描述符 `Get`；见该 Finding 正文「处置（已执行）」）。**编号与计数口径不变**（仍 **30 条发现**：确认 **19**、部分确认 **9**、证伪 **2**、无法验证 **0**；含 4 条判定为 `撤销（非缺陷）`、15 条级别调整）；`严重度`/`复核结论`/`可达性` 等字段保持原值，只加处置标注。（修复提交：`492ce5f7` "Null Validation"）
 
 
 
@@ -224,7 +225,7 @@ C# TArray<int>.Add(value)
 
 | 编号 | 严重度 | 一句话结论 | 关键位置 | 正文位置 |
 |---|---|---|---|---|
-| F-HLP-023 | **P0** | `map[不存在的键]` / `Find` / `FindKey`：返回 `nullptr` 后被解引用 → 崩（字典查找的常态用法） | `FMapHelper.cpp:144`/`:171`、`FRegisterMap.cpp:91`/`:102`/`:124` | §7.3 |
+| F-HLP-023 | **P0** | ~~`map[不存在的键]` / `Find` / `FindKey`：返回 `nullptr` 后被解引用 → 崩（字典查找的常态用法）~~ → **已修复（`492ce5f7`；F-HLP-023）** | `FMapHelper.cpp:144`/`:171`、`FRegisterMap.cpp:91`/`:102`/`:124` | §7.3 |
 | F-HLP-001 | P1 | `delete` 经 `FScriptArray*` 删真正的 `TArray<T>` → 元素析构被跳过，`TArray<FString>`/嵌套容器元素资源泄漏 | `FArrayHelper.cpp:34-39`、`TPropertyValue.inl:858` | §5 |
 | F-HLP-006 | P1 | `array[越界索引]`：`Get` 返回 `nullptr` 后被属性描述符解引用 → 崩（属"误用输入"，故非 P0） | `FArrayHelper.cpp:123-131`、`FRegisterArray.cpp:115-117` | §5（下文） |
 | F-HLP-007 | P1 | `RemoveAt`/`InsertZeroed`/`InsertDefaulted`/`Swap`/`SwapMemory` 无索引校验；`RemoveAt` 会析构任意内存（Shipping 无引擎兜底） | `FArrayHelper.cpp:196-228`、`:324-332` | §5 |
@@ -1762,13 +1763,14 @@ C# 用例：插入 3 条 → `Remove(中间那条)` → 断言 `Contains(被删�
 
 - **类别**: 未定义行为 / 崩溃
 - **严重度**: **P0****（触发条件是"查询一个不存在的键"，即字典的常态用法；`TMap` 索引器 get 直接走到这里）
-- **复核结论**: 确认 —— 代码事实、调用上下文、类别、**严重度 P0** 全部成立
+- **复核结论**: 确认 —— 代码事实、调用上下文、类别、**严重度 P0** 全部成立 **后续处置：判定升级为「确认 · 已修复（`492ce5f7`）」—— 修复在**调用侧**：`FRegisterMap`/`FRegisterArray`/`FRegisterSet` 共 7 处取值实现改为先判 helper 是否命中，未命中回退到该提交新增的 `FPropertyDescriptor::GetDefaultValue`（按 `GetBufferSize()` 把 C# 返回缓冲清零）**（见下方「处置（已执行）」）
 - **可达性**: 活跃（C# `TMap<TKey,TValue>` 的索引器 getter 在键不存在时**无条件**走到 `TMap_GetImplementation`，没有任何 `ContainsKey` 前置）
 - **复核证据**: `FMapHelper.cpp:144`（`FindKey` 未找到 → `nullptr`）、`:171`（`Get` 未找到 → `nullptr`）、`:255`/`:262`（`GetEnumeratorKey/Value` 的 `?: nullptr`）；`FRegisterMap.cpp:91-92`、`:102-103`、`:124-125`、`:167-169`、`:179-181`（**五处取值实现全部无判空**）；**C# 侧决定性证据** `Script/UE/CoreUObject/TMap.cs:256-276`（`public TValue this[TKey InKey] { get { … TMap_GetImplementation(handle, KeyBuffer, ReturnBuffer); return *(TValue*)ReturnBuffer; } }`）；子类解引用证据 `FStrPropertyDescriptor.cpp:6`
 - **级别变动**: 无（**维持 P0**）：`map[不存在的键]` 是字典的常态用法而**非误用输入**，完全满足本报告 P0 判据（"不需要'误用输入'之外的任何特殊条件"）。三条同形 P0 中只有这一条保留 P0 —— F-HLP-006 因触发条件属误用输入降为 P1，F-HLP-027 因单线程不可达撤销
 - **文件**: `Source/UnrealCSharp/Private/Reflection/Container/FMapHelper.cpp:144`、`:171`、`:255`、`:262`；`Source/UnrealCSharp/Private/Domain/Interop/FRegisterMap.cpp:91`、`:102`、`:124`、`:167`、`:179`
 - **函数**: `FMapHelper::FindKey` / `Get` / `GetEnumeratorKey` / `GetEnumeratorValue`
 - **置信度**: 高
+- **处置（已执行）**: ✅ **已修复**（修复提交 `492ce5f7` "Null Validation"；修复落在**调用侧**，`FMapHelper` 本身不动）。`FRegisterMap`（`FindKey`/`Find`/`Get`/`GetEnumeratorKey`/`GetEnumeratorValue` 5 处）、`FRegisterArray::Get`、`FRegisterSet::GetEnumerator` **共 7 处**取值实现改为先判 helper 是否命中（`if (const auto Value = MapHelper->Get(IN_KEY_BUFFER))` 形态），未命中则回退到该提交新增的 `FPropertyDescriptor::GetDefaultValue(const FPropertyDescriptor*, void*)`——它按 `GetBufferSize()` 用 `FMemory::Memzero` 把 C# 的 `RETURN_BUFFER` 清零，因此 `map[不存在的键]` 现在拿到「零值默认值」而不再崩 native 进程，`nullptr` 不再可能流到描述符 `Get`。原文「建议」第 1 条（调用侧统一补判空）与第 2 条（给 `FPropertyDescriptor` 增加默认值入口）**均已采纳**，第 2 条的落点就是这个 `GetDefaultValue`；但实现形态与原文设想**不同**——不是 `GetDefault(void** Dest)` + `FProperty::InitializeValue` 造默认值，而是按缓冲大小清零。**未做的三处（直说）**：① `FMapHelper` 自身「未找到即返回 `nullptr`」的契约**未改**（`FMapHelper.cpp:144`/`:171` 仍是裸 `return nullptr`，`GetEnumeratorKey/Value` 的 `?: nullptr` 也未改），判空责任仍留在调用侧；② 原文第 3 条建议的 `checkf`／统一辅助（`Checked<T>(p, What)` 形态）**未引入**，`FRegisterMap.cpp:82` 那处本来就自洽的 `return 0` 保持原样；③ 原文建议的 `UE_LOG(LogUnrealCSharp, Warning, TEXT("TMap.Get: key not found"))` 日志**未加**，未命中是静默返回零值。
 
 **现状（代码事实）**
 ```cpp

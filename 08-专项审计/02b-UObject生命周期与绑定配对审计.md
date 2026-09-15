@@ -1,6 +1,7 @@
 # UObject 生命周期与绑定配对专项审计
 
 > 本报告各条的**严重度见各 Finding 的「复核结论」字段**（19 条：1 条判定为非缺陷、5 条级别调整）。
+> **处置更新（修复提交 `492ce5f7`）**：`F-LIFE-003` 已修复（两个委托属性描述符 `Set` 都先把 `GetDelegate<>` 解析提到 `InitializeValue` 之前、并在解引用前判空；该条与 `01-UnrealCSharp运行时/07b-委托Handler与OptionalHelper.md` 的 `F-DEL-003` **同源，本次一并修复**，见该 Finding 正文「处置（已执行）」）。**编号与计数口径不变**（仍 **19 条：1 条判定为非缺陷、5 条级别调整**）；`严重度`/`复核结论`/`可达性` 等字段保持原值，只加处置标注。（修复提交：`492ce5f7` "Null Validation"）
 
 
 
@@ -397,13 +398,14 @@ grep `DelegateWrapper.Method` 与 `FReflectionRegistry::Deinitialize` 的调用�
 
 - **类别**: Bug | 未定义行为
 - **严重度**: **P0**(崩溃/数据损坏)（空指针解引用）
-- **复核结论**: 确认
+- **复核结论**: 确认 **后续处置：判定升级为「确认 · 已修复（`492ce5f7`）」—— 两个 `Set` 均已把 `GetDelegate<>` 解析提到 `InitializeValue` 之前并在解引用前判空；与 `01-…/07b` 的 `F-DEL-003` 同源，本次一并修复（非两处独立改动）**（见下方「处置（已执行）」）
 - **可达性**: 活跃
 - **复核证据**: 两个 `Set` 逐字确认无判空：`FDelegatePropertyDescriptor.cpp:20-31`（`:24` 取 helper → `:30` `DestScriptDelegate->BindUFunction(SrcDelegateHelper->GetUObject(), SrcDelegateHelper->GetFunctionName());`）；`FMulticastDelegatePropertyDescriptor.cpp:20-37`（`:24-25` 取 helper → `:33-34` 同样直接解引用）。解引用后果已核到实现：`FDelegateHelper::GetUObject()`（`FDelegateHelper.cpp:73-76`）读成员 `DelegateHandler`，在 `this == nullptr` 时即空指针访问（非虚函数、无内联空判）。`GetDelegate` 可返回 nullptr 已核实：`FDelegateRegistry.inl:19-25`（`return FoundValue != nullptr ? *FoundValue : nullptr;`）。对照 `NewRef` 的判空写法同样核实：`FDelegatePropertyDescriptor.cpp:37` `if (!IManagedHandleIsValid(Object))`。异步注销点核实：`FRegisterDelegate.cpp:21-28`（`AsyncTask(ENamedThreads::GameThread, ...)` 内 `RemoveDelegateReference<FDelegateHelper>`）。
 - **级别变动**: 无（P0 维持：空指针解引用，且存在"托管侧把已 `UnRegister`/`InvalidManagedHandle` 的句柄写回 delegate 属性"的活跃触发路径）
 - **文件**: `Source/UnrealCSharp/Private/Reflection/Property/DelegateProperty/FDelegatePropertyDescriptor.cpp:20-31`（`Set`）、`Source/UnrealCSharp/Private/Reflection/Property/DelegateProperty/FMulticastDelegatePropertyDescriptor.cpp:20-37`（`Set`）
 - **函数**: `FDelegatePropertyDescriptor::Set(void*, void*)`、`FMulticastDelegatePropertyDescriptor::Set(void*, void*)`
 - **置信度**: 高
+- **处置（已执行）**: ✅ **已修复**（修复提交 `492ce5f7` "Null Validation"）。两个 `Set` 都先把 `GetDelegate<>` 的解析提到 `Property->InitializeValue(Dest)` **之前**（`FDelegatePropertyDescriptor::Set` 取 `FDelegateHelper`、`FMulticastDelegatePropertyDescriptor::Set` 取 `FMulticastDelegateHelper`），并在解引用前判空：只有 helper 命中时才走 `DestScriptDelegate->BindUFunction(SrcDelegateHelper->GetUObject(), SrcDelegateHelper->GetFunctionName())` 与 `MulticastScriptDelegate->Add(ScriptDelegate)`，两个 `->GetUObject()`/`GetFunctionName()` 不再在空指针上解引用。**该条与 `01-UnrealCSharp运行时/07b-委托Handler与OptionalHelper.md` 的 `F-DEL-003` 同源** —— 两者是**同一处代码的两次登记**，本次的代码改动只有这一处、**一并修复（非两处独立改动）**。原文「建议」的判空意图**已采纳**，形态从 `if (SrcDelegateHelper == nullptr) { return; }` 改为 `if (SrcDelegateHelper != nullptr) { ... }` 正向包裹（与同文件 `NewRef` 的 `if (!IManagedHandleIsValid(Object))` 判空风格同族）。未做的部分：原文建议里的 `UE_LOG(LogUnrealCSharp, Warning, ...)` 日志**未加**（未命中是静默跳过赋值）；原文结尾"更深一层"的两条——把 `UnRegisterImplementation` 的异步 `AsyncTask` 改为 `check(IsInGameThread())`、以及在 C# 侧保证句柄不复用——**均未做**。
 
 **现状（代码事实）**
 ```cpp

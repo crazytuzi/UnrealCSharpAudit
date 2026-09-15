@@ -4,6 +4,7 @@
 >
 > ⚠️ **编号撞号警告（引用本报告必须带报告路径）**：本报告使用的发现前缀 `F-PROP2-*` 与 [`05-属性描述符-对象与委托类型.md`](05-属性描述符-对象与委托类型.md) **共用同一前缀，且编号区间重叠（001–015）**，同一编号在两侧指向**完全不同的发现**（例：两侧的 `F-PROP2-004` 分别是「6 个 `Identical` 不查空指针」与「`FFieldPathPropertyDescriptor` 无实现」）。任何引用都必须写成 `01-UnrealCSharp运行时/04b-属性描述符-字符串枚举结构体Optional.md#F-PROP2-00X` 这类带报告路径的全限定形式。
 > 本报告实际使用的编号：`F-PROP2-001` … `F-PROP2-016`（连续、无缺号、本报告内无重号；其中 `F-PROP2-016` 为 05 报告所没有的编号）。
+> **处置更新（修复提交 `492ce5f7`）**：`F-PROP2-004`、`F-PROP2-005` 已修复（6 个 `Identical` 覆写改为先解析托管句柄、未命中即 `return false`；`FOptionalPropertyDescriptor::Set` 先判 `GetOptional` 命中再 `InitializeValue`/`CopyCompleteValue`，见两条 Finding 正文「处置（已执行）」）。**编号与计数口径不变**（仍 **16 条** = 撤销（非缺陷）×1 / P0 ×2 / P1 ×2 / P2 ×4 / P3 ×7）；`严重度`/`复核结论`/`可达性` 等字段保持原值，只加处置标注。（修复提交：`492ce5f7` "Null Validation"）
 
 
 
@@ -743,13 +744,14 @@ if (FoundValue->bNeedFree)
 
 - **类别**: Bug（空指针）
 - **严重度**: **P0**
-- **复核结论**: 确认（机制与调用链成立；**触发前提**是 C# 侧传入失效/已 `Dispose`/类型不符的句柄）
+- **复核结论**: 确认（机制与调用链成立；**触发前提**是 C# 侧传入失效/已 `Dispose`/类型不符的句柄） **后续处置：判定升级为「确认 · 已修复（`492ce5f7`）」—— 6 个 `Identical` 覆写已先解析托管句柄、未命中即 `return false`，`FStructPropertyDescriptor::Identical` 亦不再重复加 `Offset_Internal` 偏移**（见下方「处置（已执行）」）
 - **可达性**: 活跃（`grep "Descriptor->Identical\("` 实测 **11** 个调用点，全部在容器元素比较路径：`FArrayHelper.cpp:148,164,180,293`、`FSetHelper.cpp:87,124,154`、`FMapHelper.cpp:101,137,164,183`；`B` 实参即 C# 传入的 `IManagedHandle`）
 - **复核证据**: `FStringRegistry.inl:25-27` 显式返回 `nullptr`（未命中即空）；6 处覆写无守卫（`FStr/FName/FText PropertyDescriptor.cpp:45-48`、`FAnsi/FUtf8Str…cpp:46-49`、`FStructPropertyDescriptor.cpp:49-52`）；同文件 `Set` 有守卫作对照（`FStrPropertyDescriptor.cpp:33`、`FStructPropertyDescriptor.cpp:37`）
 - **级别变动**: 无（由 P1 校正为 P0 成立：托管边界上的**无条件空指针解引用 → 崩溃**，与同前缀报告 `01-…/05` 的 `F-PROP2-002`（`Set` 不查 `GetMulti` 即解引用，P0）采用同一定级口径）
 - **文件**: `Source/UnrealCSharp/Private/Reflection/Property/StringProperty/FStrPropertyDescriptor.cpp:45-48`、`FNamePropertyDescriptor.cpp:45-48`、`FTextPropertyDescriptor.cpp:45-48`、`FAnsiStrPropertyDescriptor.cpp:46-49`、`FUtf8StrPropertyDescriptor.cpp:46-49`、`StructProperty/FStructPropertyDescriptor.cpp:49-52`
 - **函数**: 各 `::Identical(const void* A, const void* B, uint32 PortFlags) const`
 - **置信度**: 高（"同文件 `Set` 查空、`Identical` 不查空"这一不一致是可直接对照的代码事实）
+- **处置（已执行）**: ✅ **已修复**（修复提交 `492ce5f7` "Null Validation"）。5 个字符串描述符（`FStr`/`FName`/`FText`/`FAnsiStr`/`FUtf8Str`）与 `FStructPropertyDescriptor` 的 `Identical` 覆写已改为**先解析托管句柄、未命中即 `return false`**，不再无条件解引用；`FStructPropertyDescriptor::Identical` 同时不再经 `ContainerPtrToValuePtr(A)`（该函数会加 `Offset_Internal`，而 `FMapHelper` 已加过 `ValueOffset`，属重复偏移）。原文"建议"里"统一加守卫、失败视为不相等"已采纳；但"可抽公共模板基类、检查只写一次"**未采纳**（改为逐个描述符各自判空）。
 
 **现状（代码事实）**
 ```cpp
@@ -813,13 +815,14 @@ bool FStrPropertyDescriptor::Identical(const void* A, const void* B, const uint3
 
 - **类别**: Bug（空指针）
 - **严重度**: **P0**
-- **复核结论**: 确认（机制与调用链成立；触发前提同 `F-PROP2-004`：C# 侧传入失效/已 `Dispose` 的 Optional 句柄）
+- **复核结论**: 确认（机制与调用链成立；触发前提同 `F-PROP2-004`：C# 侧传入失效/已 `Dispose` 的 Optional 句柄） **后续处置：判定升级为「确认 · 已修复（`492ce5f7`）」—— `Set` 已先判 `GetOptional` 命中再 `InitializeValue`/`CopyCompleteValue`，该提交新增的该描述符 `Identical` 覆写同样判空后回退 `false`**（见下方「处置（已执行）」）
 - **可达性**: 活跃（`FOptionalPropertyDescriptor::Set` 是 C# 写 `TOptional<T>` 属性的唯一入口，经 `FunctionMacro.h:72` 的 `IN_VALUE()` 或 `FManagedFunctionDescriptor.cpp:56,61,82` 到达）
 - **复核证据**: `FOptionalPropertyDescriptor.cpp:36-42`（`:38` 取出后**无任何判空**，`:42` 直接 `SrcOptional->GetData()`）；`FOptionalRegistry.cpp:41-46` 未命中返回 `nullptr`（`:45`）；同文件 `Get` 路径却查空（`:9`），`FStructPropertyDescriptor::Set:37` 亦查空 —— 三处对照见上文
 - **级别变动**: **P1 → P0**（理由一句话：与 `F-PROP2-004` 属同一失效模式 —— 托管边界传入失效句柄即触发**无条件空指针解引用崩溃**，同轮复核中 004 已定 P0，同一机制不应低一档；证据行 `FOptionalPropertyDescriptor.cpp:38,42`）
 - **文件**: `Source/UnrealCSharp/Private/Reflection/Property/OptionalProperty/FOptionalPropertyDescriptor.cpp:38,42`
 - **函数**: `FOptionalPropertyDescriptor::Set(void* Src, void* Dest) const`
 - **置信度**: 高
+- **处置（已执行）**: ✅ **已修复**（修复提交 `492ce5f7` "Null Validation"）。`Set` 已先判 `GetOptional` 命中，命中才走 `Property->InitializeValue(Dest)` + `Property->CopyCompleteValue(Dest, SrcOptional->GetData())`，未命中时这条路径整段都不执行（不再对空指针调 `GetData()`）；该提交新增的该描述符 `Identical` 覆写同样判空后回退 `false`。原文"建议"里"未命中即 `return`"已采纳；但"可抽公共模板基类、检查只写一次"**未采纳**（改为各自判空），"或按清空处理 `MarkUnset`"也未做。
 
 **现状（代码事实）**
 ```cpp

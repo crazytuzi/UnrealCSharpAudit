@@ -569,7 +569,7 @@ public static void Clear() { lock (StringToMethod) { StringToMethod.Clear(); } }
 - **严重度**: **撤销（非缺陷）** —— 但**撤销前提无法验证**，标"存疑"
 - **复核结论**: 无法验证（卡点：撤销所依赖的"该裸指针安全"前提 = LeanCLR GC 是否为**非搬移式**、以及 C++ 侧拿到指针后的生存期，均未核实）→ 建议保持"存疑"而非当已结案
 - **可达性**: 活跃（C++ 侧**确有调用点**，撤销理由不能是"无人使用"）
-- **复核证据**: 代码事实 `Script/Interop/Handle/HandleData.cs:108-116`（`GetObjectPointer` = `Unsafe.As<object, nint>(ref Object)` 返回托管对象裸地址）；`:118-127`（`GetObjectPointers` 批量同构，**已于本轮删除**，见 `08-专项审计/01` 的 F-DEAD-002）；而句柄默认**未 pin**（`:39` `GCHandleType.Normal`）。实测 grep（模式 `GetObjectPointer|GetObjectPointers`，`Source/**`）= 8 命中，**C++ 侧活跃调用**：`Source/UnrealCSharpCore/Private/Domain/LeanCLR/FLeanCLRDomain.cpp:125, 155, 167, 176, 196`（另有声明 `Public/Domain/LeanCLR/FLeanCLRDomain.h:196`、`Public/CoreMacro/FunctionMacro.h:39,41`）
+- **复核证据**: 代码事实 `Script/Interop/Handle/HandleData.cs:108-116`（`GetObjectPointer` = `Unsafe.As<object, nint>(ref Object)` 返回托管对象裸地址）；`:118-127`（`GetObjectPointers` 批量同构，**已于 `4f351f12` 删除**，见 `08-专项审计/01` 的 F-DEAD-002）；而句柄默认**未 pin**（`:39` `GCHandleType.Normal`）。实测 grep（模式 `GetObjectPointer|GetObjectPointers`，`Source/**`）= 8 命中，**C++ 侧活跃调用**：`Source/UnrealCSharpCore/Private/Domain/LeanCLR/FLeanCLRDomain.cpp:125, 155, 167, 176, 196`（另有声明 `Public/Domain/LeanCLR/FLeanCLRDomain.h:196`、`Public/CoreMacro/FunctionMacro.h:39,41`）
 - **级别变动**: 维持"撤销（非缺陷）"状态但**降置信**：撤销证据不足，按"存疑/待验证"处理（不进 P0/P1 排期，也不宣布结案）
 - **函数**: `Interop.HandleData.GetObjectPointer(nint)` / `GetObjectPointers(nint*, nint*, int)`
 - **置信度**: 中—高（`Unsafe.As<object, nint>` 的语义是确定的；C++ 侧如何使用该指针需另行核实 → 标中）
@@ -577,7 +577,7 @@ public static void Clear() { lock (StringToMethod) { StringToMethod.Clear(); } }
 **现状（代码事实）**
 
 ```csharp
-// Script/Interop/Handle/HandleData.cs（**删除前快照**：`:118-127` 的 `GetObjectPointers` 已于本轮删除；现 `Clear()` 位移至 `:118-134`，文件 147 → 136 行）
+// Script/Interop/Handle/HandleData.cs（**删除前快照**：`:118-127` 的 `GetObjectPointers` 已于 `4f351f12` 删除；现 `Clear()` 位移至 `:118-134`，文件 147 → 136 行）
  27:         public static nint Alloc(object InObject, bool bPinned = false)
 ...
  39:                         GCHandle.Alloc(InObject, bPinned ? GCHandleType.Pinned : GCHandleType.Normal);
@@ -605,14 +605,14 @@ public static void Clear() { lock (StringToMethod) { StringToMethod.Clear(); } }
 
 **调用上下文**
 待走查 C++ 侧（`UTILS_BRIDGE_METHODS` 里应有 `GetObjectPointer` / `GetObjectPointers` 对应项）；`HandleData.cs:118` 的批量版本命名与签名暗示 C++ 会一次性取一批对象地址，例如做批量比较或批量 pin。
-> **本轮已走查并定论**：`GetObjectPointer`（单数）的对应项在 **LeanCLR 专用表** `LEANCLR_INTEROP_BRIDGE_METHODS`（`FLeanCLRDomain.h:196`），**不在** `UTILS_BRIDGE_METHODS`；而复数版**没有任何 `Op(...)` 表项**、没有 `Name##Fn` 成员、没有 C++ 调用点 —— 那条"批量取地址"的路径**从未接线**（当初的批量解析机制 `ResolveObjectPointers`/`RefObjectPointers`/`RefHandleKeys` 在现有代码里 0 命中）。故复数版判为死桥并**已删除**（见 `08-专项审计/01` 的 F-DEAD-002）。
+> **已走查并定论**：`GetObjectPointer`（单数）的对应项在 **LeanCLR 专用表** `LEANCLR_INTEROP_BRIDGE_METHODS`（`FLeanCLRDomain.h:196`），**不在** `UTILS_BRIDGE_METHODS`；而复数版**没有任何 `Op(...)` 表项**、没有 `Name##Fn` 成员、没有 C++ 调用点 —— 那条"批量取地址"的路径**从未接线**（当初的批量解析机制 `ResolveObjectPointers`/`RefObjectPointers`/`RefHandleKeys` 在现有代码里 0 命中）。故复数版判为死桥并**已删除**（见 `08-专项审计/01` 的 F-DEAD-002）。
 
 **问题**
 `Unsafe.As<object, nint>(ref Object)` 取的是**托管对象的引用值（即对象头地址）**。该地址在 GC 压缩后**会改变**。虽然 `Alloc` 用了 `Normal` 强句柄（对象不会被回收，所以不会悬空到已释放内存），但**强句柄不阻止对象移动** —— `GCHandleType.Normal` 只保证存活，不保证地址稳定。因此 C++ 若把该地址存起来跨帧使用，GC 一旦压缩就是**读到垃圾/写坏别的对象**。
 
 只有 `GCHandleType.Pinned` 才保证地址稳定，而 `Alloc` 的默认是 `bPinned: false`（`:27`）。grep 全插件 `HandleData.Alloc` 实参含 `true` 的只有 **1 处**（`ArrayBridge.cs:19`），因此经 `GetObjectPointer` 取地址的对象（对象、字符串、方法返回值…）**全部是未固定**的 —— 未固定的强句柄只保证"不回收"，**不保证"不移动"**。
 
-另：`GetObjectPointers` 在 `InHandles != null && OutObjectPointers != null` 时**不校验 `InLength`**，为负值会直接不进循环（无害），但没有上界校验——由 C++ 保证，属隐性契约。（注：该批量方法已于本轮删除，此条隐性契约随之消失。）
+另：`GetObjectPointers` 在 `InHandles != null && OutObjectPointers != null` 时**不校验 `InLength`**，为负值会直接不进循环（无害），但没有上界校验——由 C++ 保证，属隐性契约。（注：该批量方法已于 `4f351f12` 删除，此条隐性契约随之消失。）
 
 **建议**
 - 若 C++ 只是做"取一批地址去 native 侧比对/当 key"，改为在 C++ 侧直接用句柄号 `nint`（`HandleData` 的 `HandleReference.Value` 本来就是稳定且唯一的 key），**不需要**对象地址。
@@ -1373,7 +1373,7 @@ grep 证据（`Select-String`，作用域 `Plugins/UnrealCSharp/Source/**` 的 `
 |---|---|---|---|
 | `FieldBridge.SetStaticValue` | 0 | 0 | **死代码**（仅经 `GetFunctionPointer` 字符串可达 → 潜在活代码） |
 | `FieldBridge.GetStaticValue` | 0 | 0 | 同上 |
-| ~~`HandleData.GetObjectPointers`（复数）~~（**本轮已删除**） | **0**（无 typedef、无 `Op`、无 `FunctionMacro` 使用者） | **0** | **强死代码**（见第 4 节）**→ 已删除** |
+| ~~`HandleData.GetObjectPointers`（复数）~~（**已删除**，提交 `4f351f12`） | **0**（无 typedef、无 `Op`、无 `FunctionMacro` 使用者） | **0** | **强死代码**（见第 4 节）**→ 已删除** |
 | `HandleData.GetObjectPointer`（单数） | LeanCLR 专属（`FLeanCLRDomain.cpp:125,155,167,176,196`） | **0**（原 1 处为复数版内部调用，随其删除归零） | 活代码（**仅 LeanCLR**） |
 | `MethodBridge.GetMethod` | — | 见第 6 节走查 | 待定 |
 
@@ -3542,7 +3542,7 @@ grep 证据：`Select-String -Path Script\Weavers\UnrealTypeWeaver.cs -Pattern '
 
 | C# 符号 | 声明 | 全插件命中 | 判定 | 证据 |
 |---|---|---|---|---|
-| ~~`HandleData.GetObjectPointers`（复数）~~（**本轮已删除**） | ~~`HandleData.cs:118`~~ | **2** → **0**（自身声明 + `FunctionMacro.h:41` 的宏；原文写 3 系把单数内部调用计入） | **强死代码 → 已删除** | 复数**无 typedef、无 `Op`、无 C++ 调用**（判据 = 无 `Op(...)` 表项，而非 C# 引用数）；C# 内亦无调用者 |
+| ~~`HandleData.GetObjectPointers`（复数）~~（**已删除**，提交 `4f351f12`） | ~~`HandleData.cs:118`~~ | **2** → **0**（自身声明 + `FunctionMacro.h:41` 的宏；原文写 3 系把单数内部调用计入） | **强死代码 → 已删除** | 复数**无 typedef、无 `Op`、无 C++ 调用**（判据 = 无 `Op(...)` 表项，而非 C# 引用数）；C# 内亦无调用者 |
 | `HandleData.GetObjectPointer`（单数） | `HandleData.cs:108` | **5**（1 声明 + C++ LeanCLR 4 处；原 6 含复数版内部调用，随其删除归零） | **活（仅 LeanCLR）** | `FLeanCLRDomain.cpp:125,155,167,176,196` |
 | `MethodBridge.GetMethod` | `MethodBridge.cs:140` | 待 `Script/UE/**` 走查（见第 6 节） | 待定 | — |
 | `MethodBridge.Invoke` | `MethodBridge.cs:33` | C++ 3 处 + 声明 | 活 | `FLeanCLRDomain.cpp:151,153,182` |

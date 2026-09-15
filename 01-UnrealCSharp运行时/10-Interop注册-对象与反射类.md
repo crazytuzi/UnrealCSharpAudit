@@ -1,6 +1,7 @@
 # Interop 注册：对象与反射类（FRegisterObject / Class / Struct / Property / Function / ScriptInterface）
 
 > 本报告各条**严重度见各 Finding 的「复核结论」字段**。**13 条 = 原 12 条 + 新增 1 条（F-INT1-013）**；其中 **2 条判定为非缺陷「撤销」**（F-INT1-008、F-INT1-009）、**4 条级别调整**（F-INT1-003/004/005 P1→P2、F-INT1-007 P2→P3）。「注册名↔目标符号核对表」：**52/52 一致、0 条不一致**。
+> **处置更新（修复提交 `492ce5f7`）**：`F-INT1-001`、`F-INT1-002` 两条 P0 空指针解引用**均已修复**（前者在 `FRegisterScriptInterface.cpp` 的 `GetObjectImplementation` 补三元判空、后者在 `FRegisterClass.cpp` 把 `GetString<FName>` 纳入 `if` 守卫；见各自正文「处置（已执行）」）。**编号与计数口径不变**（仍 **13 条 = 原 12 条 + 新增 1 条（F-INT1-013）**）；`严重度`/`复核结论`/`可达性` 等字段保持原值，只加处置标注。（修复提交：`492ce5f7` "Null Validation"）
 
 
 
@@ -183,7 +184,7 @@
 
 - **类别**: Bug / 未定义行为
 - **严重度**: **P0**(崩溃)
-- **复核结论**: 确认（独立复核：代码事实、调用上下文、类别、严重度**全部成立**）
+- **复核结论**: 确认（独立复核：代码事实、调用上下文、类别、严重度**全部成立**） **后续处置：判定升级为「确认 · 已修复（`492ce5f7`）」—— `FRegisterScriptInterface.cpp` 已改为 `Multi != nullptr ? FCSharpEnvironment::GetEnvironment().Bind(Multi->GetObject()) : InvalidManagedHandle` 三元判空，与同文件 `IdenticalImplementation` 既有的两次判空口径一致**（见下方「处置（已执行）」）
 - **可达性**: 活跃
 - **复核证据**: `Source/UnrealCSharp/Private/Domain/Interop/FRegisterScriptInterface.cpp:62-68` 逐字吻合（`:64-65` 取 `GetMulti<TScriptInterface<IInterface>>`，`:67` 直接 `Multi->GetObject()`，无判空）。`GetMulti` 未命中**确定**返回 `nullptr`：`Public/Registry/FMultiRegistry.inl:24-26`、`Public/Environment/FCSharpEnvironment.inl:224-226`（环境未初始化同样 `nullptr`）——已回源码逐行确认。调用链逐跳已核：`Script/UE/CoreUObject/TScriptInterface.cs:46` → `Script/UE/Library/TScriptInterfaceImplementation.cs:36` → 声明 `:32` → 注册点 `:76`。触发时序证据：`UnRegister` 走 `AsyncTask`（`:53-60`）而读路径同步（`:64-67`），同文件 `IdenticalImplementation`（`:36-40`）对两次 `GetMulti` 都判了空，**本处是组内唯一漏判**。
 - **级别变动**: 无（P0 维持）
@@ -191,6 +192,7 @@
 - **文件**: `Source/UnrealCSharp/Private/Domain/Interop/FRegisterScriptInterface.cpp:62-68`
 - **函数**: `FRegisterScriptInterface::GetObjectImplementation(IManagedHandle)`
 - **置信度**: 高
+- **处置（已执行）**: ✅ **已修复**（修复提交 `492ce5f7` "Null Validation"）。`FRegisterScriptInterface.cpp` 的 `GetObjectImplementation` 已改为 `Multi != nullptr ? FCSharpEnvironment::GetEnvironment().Bind(Multi->GetObject()) : InvalidManagedHandle` 三元判空，未命中不再解引用空指针；这与同文件 `IdenticalImplementation`（`:36-40`）对两次 `GetMulti` 的判空口径**一致**。原文「建议」给出的正是这一行（含 `InvalidManagedHandle` 回退，与 `FRegisterObject.cpp:47`/`:59` 的惯例一致），已**逐字采纳**。未做的部分：原文「验证方式」建议的 `check(Multi)` 复现用例**未加**，`Public/Binding/Core/TPropertyValue.inl:149`/`:296`/`:526` 的同型未判空点属其它报告范围、本次**未动**；本 Finding 的 `文件:行` 引用按修复后现状自然顺延（该函数体现在是 `:62-70`），报告正文保留修复前的 `:62-68` 快照不改。
 
 **现状（代码事实）**
 ```cpp
@@ -232,7 +234,7 @@ grep `GetMulti<TScriptInterface` 找同类未判空使用点（另见 `Public/Bi
 
 - **类别**: Bug / 未定义行为
 - **严重度**: **P0**(崩溃)
-- **复核结论**: 确认（独立复核：代码事实、调用上下文、类别、严重度**全部成立**）
+- **复核结论**: 确认（独立复核：代码事实、调用上下文、类别、严重度**全部成立**） **后续处置：判定升级为「确认 · 已修复（`492ce5f7`）」—— `FRegisterClass.cpp` 已把 `GetString<FName>` 纳入 `if (const auto Name = FCSharpEnvironment::GetEnvironment().GetString<FName>(InName))` 守卫，`*Name` 不再裸解引用**（见下方「处置（已执行）」）
 - **可达性**: 活跃
 - **复核证据**: `Source/UnrealCSharp/Private/Domain/Interop/FRegisterClass.cpp:14-19` 逐字吻合——`:14-15` 判空 `FoundClass`、`:17` 取 `GetString<FName>(InName)`、`:19` 立即 `*Name`。返回类型确为指针：`Public/Registry/FStringRegistry.h:22`（`typedef TStringAddress<FName*> FNameAddress`）、`:44`（`FNameMapping`）；未命中返回 `nullptr`：`Public/Registry/FStringRegistry.inl:25-27`、`Public/Environment/FCSharpEnvironment.inl:256-261`。调用链逐跳已核（grep 工具，模式 `UClass_RemoveFunctionImplementation`，全工程 **4 行 = 声明 + 包装 + 内部调用 + 调用方**）：`Script/UE/CoreUObject/Class.cs:9` → `Script/UE/Library/ClassImplementation.cs:9`（包装）→ `:11`（`__UClass_...`）→ 声明 `:7`；注册点 `:51`。全组 6 文件仅此 1 处使用 `GetString<`。
 - **级别变动**: 无（P0 维持）
@@ -240,6 +242,7 @@ grep `GetMulti<TScriptInterface` 找同类未判空使用点（另见 `Public/Bi
 - **文件**: `Source/UnrealCSharp/Private/Domain/Interop/FRegisterClass.cpp:17-19`
 - **函数**: `FRegisterClass::RemoveFunctionImplementation(IManagedHandle, IManagedHandle)`
 - **置信度**: 高
+- **处置（已执行）**: ✅ **已修复**（修复提交 `492ce5f7` "Null Validation"）。`FRegisterClass.cpp` 已把 `GetString<FName>` 纳入 `if (const auto Name = FCSharpEnvironment::GetEnvironment().GetString<FName>(InName))` 守卫，`*Name` 只在该守卫内解引用，未登记句柄由「崩溃」变为「什么都不做」。原文「建议」的判空意图**已采纳**，只是从 `if (Name == nullptr) { return; }` 的早退写法改为与该文件既有的 `FoundClass`、`Function` 两层守卫**同形的 `if (const auto ...)` 嵌套风格**。未做的部分：原文「验证方式」的用例（C# 传 `default(FName)` 或未初始化的 `FName`）**未实跑**（本报告仍为纯静态阅读）；失败路径**未加日志、也无错误返回**（函数为 `void`，C# 侧看不出与成功的区别）；本次只修 `*Name` 这一处，`FStringRegistry.inl:25-27` 的 `GetString` 未命中仍返回 `nullptr` 的契约**未改**。
 
 **现状（代码事实）**
 ```cpp

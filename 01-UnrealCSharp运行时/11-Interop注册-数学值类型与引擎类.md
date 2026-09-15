@@ -4,6 +4,7 @@
 > **源码级核对结论**：28 条逐条回源码重核 —— **确认 15 / 部分确认 13 / 证伪 0 / 无法验证 0**；级别 **下调 2 条（`F-INT2-003` P2→P3、`F-INT2-006` P1→P2）、上调 1 条（`F-INT2-019` 撤销→P3）、维持 25 条**；修正后分布 **P0=1 / P1=7 / P2=7 / P3=13 / 撤销 0**（按各条 `**严重度**` 字段统计）。
 > 用**生成地面真值** `Script/UE/Proxy/Binding/*.cs`（16055 个文件）与 **UE 5.6 引擎源码**（`Engine\Source`）交叉验证，据此**证伪了 7 处"形式化推断"**（集中在 `F-INT2-003/004/005/006/017/018/020`：`ParamNames` 长度**不决定** C# 形参个数、`Algo::Count` 后缀**不外泄**到 C# 名）。详见各条 `**复核证据**`。
 > ⚠️ **`F-INT2-*` 编号与 `01-…/10b` 撞号**，引用务必带报告路径，见 §3 开头的注记。
+> **处置更新（修复提交 `492ce5f7`）**：`F-INT2-001` 已修复（`FRegisterDataTableFunctionLibrary.cpp` 的判断条件已改为 `FindRowData != nullptr && *FindRowData != nullptr && Class != nullptr`，原先只判 `InRowName->IsNone()`（判错条件）的写法已移除；见该 Finding 正文「处置（已执行）」）。**编号与计数口径不变**（仍 **28 条：含 1 条判定为非缺陷、13 条级别调整**）；`严重度`/`复核结论`/`可达性` 等字段保持原值，只加处置标注。（修复提交：`492ce5f7` "Null Validation"）
 
 
 
@@ -133,13 +134,14 @@ private static nint {slot};
 
 - **类别**: Bug / 未定义行为
 - **严重度**: **P0**(崩溃/数据损坏)
-- **复核结论**: 确认 —— 源码事实、调用上下文、类别、严重度**全部成立**。**终裁：P0 维持**
+- **复核结论**: 确认 —— 源码事实、调用上下文、类别、严重度**全部成立**。**终裁：P0 维持** **后续处置：判定升级为「确认 · 已修复（`492ce5f7`）」—— `FRegisterDataTableFunctionLibrary.cpp` 的判断条件已改为 `FindRowData != nullptr && *FindRowData != nullptr && Class != nullptr`，原先只判 `InRowName->IsNone()`（判错条件）的写法已移除**（见下方「处置（已执行）」）
 - **可达性**: 活跃
 - **复核证据**: ①`Source/UnrealCSharp/Private/Domain/Interop/FRegisterDataTableFunctionLibrary.cpp:31` = `const auto FindRowData = *DataTable->GetRowMap().Find(*InRowName);` **逐字吻合**（`:29 *OutRow = Class->InitObject();`、`:35 CopyScriptStruct` 亦吻合）。②**引擎权威对照**：引擎自己的同一逻辑 `Runtime/Engine/Classes/Engine/DataTable.h:252-260` 写作 `uint8* const* RowDataPtr = GetRowMap().Find(RowName); if (RowDataPtr == nullptr) { …UE_LOG… return nullptr; } uint8* RowData = *RowDataPtr; check(RowData);` —— 证明 `TMap::Find` 未命中返回 **nullptr**（引擎显式判 `== nullptr`），且引擎**连解引用后的值都再 `check`**。③`Runtime/Engine/Private/DataTableFunctionLibrary.cpp:68-89 Generic_GetDataTableRowFromName` 同样先 `if (RowPtr != nullptr)` 再 `CopyScriptStruct`；`:91-96` 的 `GetDataTableRowFromName` 本体是 `check(0)` 桩 → 本 thunk 属**有意重写**，因此"丢掉判空"是重写时的真实缺陷。④`GetRowMap()` 返回 `const TMap<FName, uint8*>&`：`DataTable.h:110`。
 - **级别变动**: 无（P0 维持）
 - **文件**: `Source/UnrealCSharp/Private/Domain/Interop/FRegisterDataTableFunctionLibrary.cpp:31`
 - **函数**: `FRegisterDataTableFunctionLibrary::GetDataTableRowFromNameImplementation(IManagedHandle, IManagedHandle, IManagedHandle*)`
 - **置信度**: 高
+- **处置（已执行）**: ✅ **已修复**（修复提交 `492ce5f7` "Null Validation"）。`FRegisterDataTableFunctionLibrary.cpp` 的判断条件已改为 `FindRowData != nullptr && *FindRowData != nullptr && Class != nullptr`（与既有的 `!InRowName->IsNone()` 一并放在同一个 `if (const auto Class = ...; ...)` 守卫里），原先只判 `InRowName->IsNone()` 的**判错条件写法已移除**；`*OutRow = Class->InitObject()` 与 `CopyScriptStruct(OutRowData, *FindRowData)` 现在全部落在守卫内，`FindRowData` 不再以野指针身份进入 `CopyScriptStruct`。原文「建议」的判空点**已全部采纳**：`FindRowData`/`*FindRowData`/`Class` 并入同一守卫，`OutRowData` 改为 `if (const auto OutRowData = ...)` 守卫，正文「同一处次级缺陷」点出的 `OutRow` 判空也已补上（整个函数体包在 `if (OutRow != nullptr)` 内）。未做的部分：未命中仍**静默 `return 0`、未加 `UE_LOG`/`ensure`**（与 UE 原生「未找到返回 false」一致，但原文「验证方式」第 3 条的 `ensure(FindRowData != nullptr)` **未加**）；「验证方式」第 2 条的 C# 崩溃用例**未实跑**；原文末段的更彻底方向「直接改调引擎 `UDataTableFunctionLibrary::GetDataTableRowFromName`」**未采纳**，本 thunk 仍是自建行查找。
 
 **现状（代码事实）**
 ```cpp

@@ -2,6 +2,7 @@
 
 > 本报告各条**严重度见各 Finding 的「复核结论」字段**（18 条全部回源码逐条核对；含 0 条判定为非缺陷；级别调整 2 条 = F-DEL-006 P2→P1（上调）、F-DEL-005 P1→P2（下调）；另有 4 处**子论断**被证伪/撤回，详见各条 `复核证据`）。
 > 各级分布：**P0 = 2、P1 = 4、P2 = 4、P3 = 8**（初判定级 P0 = 3、P1 = 5、P2 = 5、P3 = 5）。
+> **处置更新（修复提交 `492ce5f7`）**：`F-DEL-003` 已修复（`FDelegatePropertyDescriptor::Set` 与 `FMulticastDelegatePropertyDescriptor::Set` 均已在 `InitializeValue` 之前解析 `GetDelegate<>` 并判空，未命中时不执行 `BindUFunction`（多播侧为 `Add`），见该 Finding 正文「处置（已执行）」）。**编号与计数口径不变**（仍 **18 条**编号发现 `F-DEL-001` … `F-DEL-018`；各级分布 P0 = 2、P1 = 4、P2 = 4、P3 = 8）；`严重度`/`复核结论`/`可达性` 等字段保持原值，只加处置标注。（修复提交：`492ce5f7` "Null Validation"）
 
 
 
@@ -669,13 +670,14 @@ for (const auto& [Key, Value] : Snapshot)
 
 - **类别**: Bug（空指针解引用）
 - **严重度**: **P0**（崩溃）
-- **复核结论**: **确认（成立，P0 维持）** —— `GetDelegate<>()` 会返回 `nullptr`，而 `:30` 直接在其结果上调用成员函数；**最短触发路径**：C# 侧传入一个 `FDelegateRegistry` 里不存在的句柄（含 `0`/`InvalidManagedHandle`，例如把 `null` 的 `FDelegate` 字段赋给委托属性，或对该句柄 `HandleData.GetHandle()` 因 `ConditionalWeakTable` 未命中而返回 0，见 `Script/Interop/Handle/HandleData.cs:80-93`）
+- **复核结论**: **确认（成立，P0 维持）** —— `GetDelegate<>()` 会返回 `nullptr`，而 `:30` 直接在其结果上调用成员函数；**最短触发路径**：C# 侧传入一个 `FDelegateRegistry` 里不存在的句柄（含 `0`/`InvalidManagedHandle`，例如把 `null` 的 `FDelegate` 字段赋给委托属性，或对该句柄 `HandleData.GetHandle()` 因 `ConditionalWeakTable` 未命中而返回 0，见 `Script/Interop/Handle/HandleData.cs:80-93`） **后续处置：判定升级为「确认 · 已修复（`492ce5f7`）」—— `FDelegatePropertyDescriptor::Set` 与 `FMulticastDelegatePropertyDescriptor::Set` 均已在 `InitializeValue` 之前解析 `GetDelegate<>` 并判空，未命中时不执行 `BindUFunction`（多播侧为 `Add`）**（见下方「处置（已执行）」）
 - **可达性**: 活跃
 - **复核证据**: `Source/UnrealCSharp/Private/Reflection/Property/DelegateProperty/FDelegatePropertyDescriptor.cpp:22-30`（`GetDelegate<FDelegateHelper>` 结果**未判空**即 `:30 SrcDelegateHelper->GetUObject()`）；多播同构 `FMulticastDelegatePropertyDescriptor.cpp:22-34`；`Source/UnrealCSharp/Public/Registry/FDelegateRegistry.inl:19-25`（`return FoundValue != nullptr ? *FoundValue : nullptr;` 明确可返回空）；`Source/UnrealCSharp/Public/Registry/FDelegateRegistry.inl:38`（3 参 `AddReference` 只写 `ManagedHandle2Value`，键不存在即查不到）；对照 `Source/UnrealCSharp/Private/Domain/Interop/FRegisterDelegate.cpp:35-48`（同一 API 的 4 层判空）
 - **级别变动**: 无（P0 维持；理由：对标 `_CONVENTIONS.md` 的 P0=崩溃，且这不是"防御性编程建议"——`HandleData.GetHandle()` 对无句柄对象返回 `0` 是正常语义，`null` 委托赋值即可命中）
 - **文件**: `Source/UnrealCSharp/Private/Reflection/Property/DelegateProperty/FDelegatePropertyDescriptor.cpp:30`
 - **函数**: `FDelegatePropertyDescriptor::Set(void*, void*)`（同类问题：`FMulticastDelegatePropertyDescriptor::Set`，`.../FMulticastDelegatePropertyDescriptor.cpp:33`）
 - **置信度**: 高
+- **处置（已执行）**: ✅ **已修复**（修复提交 `492ce5f7` "Null Validation"）。`FDelegatePropertyDescriptor::Set` 与 `FMulticastDelegatePropertyDescriptor::Set` 均已在 `InitializeValue` 之前解析 `GetDelegate<>`，并在未命中时不执行 `BindUFunction`（多播侧为 `Add`）——即原文"建议"里的判空守卫已采纳。未采纳的部分：没有按建议改成 `Property->ClearValue(Dest)` 的显式清空写法（`InitializeValue` 仍是无条件调用），也没有"让 `Set` 返回 `bool` 并由属性描述符层决定是否向 C# 抛异常"的重构。本条"额外问题"（在已持旧绑定的属性上重复 `InitializeValue`、覆盖旧 `FScriptDelegate` 前未 `Clear`/`Unbind`）尚未处理。
 
 **现状（代码事实）**
 ```cpp
@@ -1956,7 +1958,7 @@ ensureMsgf(!Functions.Contains(InName), TEXT("Duplicate function registration: %
 |---|---|---|---|---|
 | F-DEL-001 | P1 | Bug/UB | 回调链全程不校验 `Method`/`Object`，空指针直达 `InMethod->Runtime_Invoke` | `DelegateHandler.cpp:10` |
 | F-DEL-002 | P0 | Bug/UB | 多播广播遍历 `DelegateWrappers` 时回调可 `Remove`/`Clear` → 陈旧 end 指针/越界，`Clear` 即 use-after-free | `MulticastDelegateHandler.cpp:11` |
-| F-DEL-003 | P0 | Bug | 委托属性 `Set` 未判空 `GetDelegate<>()` 结果 → 空指针解引用 | `FDelegatePropertyDescriptor.cpp:30` |
+| F-DEL-003 | P0 | Bug | ~~委托属性 `Set` 未判空 `GetDelegate<>()` 结果 → 空指针解引用~~ → **已修复（`492ce5f7`；F-DEL-003）** | `FDelegatePropertyDescriptor.cpp:30` |
 | F-DEL-004 | P1 | Bug/静默失效 | 单播 `DelegateWrapper` 无任何解绑点；`Bind` 的 `!IsBound()` 前置条件使桥可能永不接管 | `DelegateHandler.cpp:64` |
 | F-DEL-005 | P2 | 资源驻留 | `AddToRoot()` 锚定桥 UObject，回收要等 C# 终结器 + `AsyncTask` + GC（非确定性驻留，非永久泄漏） | `FDelegateHelper.cpp:24` |
 | F-DEL-006 | P1 | 泄漏 | `FOptionalHelper` 释放只 `Free` 不析构内部值；`Set` 在活值上 `InitializeValue`（`:91`，权威修复点） | `FOptionalHelper.cpp:38`、`:91` |
