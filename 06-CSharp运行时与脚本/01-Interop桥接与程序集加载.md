@@ -11,6 +11,8 @@
 
 > 发现 40 条；未覆盖项见第 7 节
 
+
+> **处置更新（2026-09-16，G7 活跃路径子集；**已压缩提交为 `1551383b`**）**：本报告 **3 条已改** —— **`F-CS1-028`**（`GetTypeSize`/`BufferSize` 由 `sbyte` 改 `int`，新增 `GetLdcI4()` 按值选 `Ldc_I4_S`/`Ldc_I4`，6 处发射点全覆盖；**插件模板与工程部署副本 `Script/Weavers/UnrealTypeWeaver.cs` 两处同改** —— `Script/Weavers/Weavers.csproj` 只编后者）；**`F-CS1-011`**（槽位语义按 `IScriptTypes.h:79-81` 的 `IManagedHandle` 对齐：引用类型改走 `HandleData.GetObject`/`Alloc`，值类型补 `bool`/`nint`/`nuint` 分支；**保留原签名 `long` 与原命名 `LongToField`/`FieldToLong`**（该槽位即 `IManagedHandle` = int64，ABI 不变），格式回到修改前的 `switch` 表达式形态 ⇒ 与 HEAD 的差异仅 3 行；**未加 try/catch**；C++ 侧仍无调用点）；**`F-CS1-003`**（`MethodBridge.GetMethod` 增参 `paramCount`，未命中/个数不符时**静默返回 0**；⚠️ **`call 0` 未消除**，且生成侧 `#else` 分支**当前已参编** ⇒ 本条当前是**活跃**缺陷，原文"潜伏"是按 LeanCLR 前提写的）⇒ 三条中 `F-CS1-028`/`F-CS1-011` 为已修、`F-CS1-003` **仅部分处置**。本轮口径：**不新增注释 / `throw` / 日志 / try-catch**。逐条明细见 [`09-…/00`](../../09-问题清单/00-推荐优先修复清单.md) §2.1。
 ## 0. 覆盖范围与阅读清单
 
 | 文件 | 行数 | 是否读完 | 备注 |

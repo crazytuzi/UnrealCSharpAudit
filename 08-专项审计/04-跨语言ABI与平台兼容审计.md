@@ -14,6 +14,8 @@
 
 ---
 
+
+> **处置更新（2026-09-16，G7 活跃路径子集；**已压缩提交为 `1551383b`**）**：本报告 **`F-ABI-001`、`F-ABI-004` 已修，`F-ABI-030` 已改（条件生效），`F-ABI-002` 仅部分处置** —— **`F-ABI-001`**（`GetNamespace`/`GetName`/`GetFullName` 改为按 **UTF-8 字节数**取字符前缀：三个方法只把 `Math.Min(chars…)` 这一个实参换成新增的 `GetUTF8CharCount(...)`（原文其余逐字不变），逐字符算 1/2/3/4 字节、代理对整对计入、容量不足停在字符边界；截断时返回 `InStringSize-1`，与 `TGetUtf8String.inl` 既有"翻倍重试"协议**兼容，C++ 侧无需改**；**未加 try/catch**）；**`F-ABI-004`**（**两后端都改**：注册 ABI `method_bridge_register_binding_fn` 扩一列形参个数 `(names, methods, paramCounts, length)`，个数由新增的 `static constexpr` 重载 `TGetFunctionParamCount()` 在**编译期**从函数指针类型取出；C# `RegisterBinding` 存 `(指针,个数)`、`GetMethod(ref slot,name,paramCount)` 核对；**LeanCLR 侧**在 `PInvoke_Classify` 按 C# 声明原型调用**之前**比对 `InManagedMethod->parameter_count`，不一致即返回 `RtErr::ExecutionEngine`。⚠️ **只比个数、不比类型**）；**`F-ABI-030`**（与 `06-…/02b` 的 `F-CS2B-027` 同一行：长度判断前置；当前配置下该区块不参编）；**`F-ABI-002`**（与 `F-CS1-003`/`F-CS3-001` 同处：`GetMethod` 未命中/个数不符时静默返回 0；⚠️ **`call 0` 未消除**）。⚠️ **可达性更正**：`F-ABI-002`/`F-ABI-030` 原文按 "当前配置 = LeanCLR" 判为潜伏，实测当前配置是 **CoreCLR**（`F-ABI-002` 活跃、`F-ABI-030` 不参编）—— 见 [`00-总览/03`](../../00-总览/03-修复优先级评估.md) §1.3 事实更正。本轮口径：**不新增注释 / `throw` / 日志 / try-catch**。明细见 [`09-…/00`](../../09-问题清单/00-推荐优先修复清单.md) §2.1。
 ## 0. 覆盖范围与阅读清单
 
 ### 0.1 完整读完的文件
