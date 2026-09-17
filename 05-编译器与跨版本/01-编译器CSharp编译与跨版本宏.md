@@ -876,10 +876,11 @@ void FSolutionGenerator::ReplaceTargetFramework(FString& OutResult)
 实测（本工作区）：`Script/Shared.props:8`、`Script/CodeAnalysis/CodeAnalysis.csproj:9`、`Script/Interop/Interop.csproj:15` 均为 `net10.0`；捆绑运行时为 LeanCLR/CoreCLR `10.0.4`（`LeanCLR.Build.cs:11-15`、`CoreCLR.Build.cs:13-17`）、Mono `10.0.1`（`Mono.Build.cs:13-15`）。
 
 **调用上下文**
-`ReplaceTargetFramework` 被用于 `Interop.csproj`（`FSolutionGenerator.cpp:84`）、`Shared.props`（`:120`）、`CodeAnalysis.csproj`（`:20`），即**所有** C# 工程的 TFM 都从这里来；而 `.csproj` 只在"目标文件不存在"时才重新生成（`CopyTemplate:141/151`，默认 `bReplaceExistingFile=false`）。
+`ReplaceTargetFramework` 被用于 `Interop.csproj`（`FSolutionGenerator.cpp:84`）、`Shared.props`（`:120`）、`CodeAnalysis.csproj`（`:20`），即**所有** C# 工程的 TFM 都从这里来；而 `.csproj`/`Shared.props` 的写入策略是**每次覆盖**（`CopyTemplate` 的 `bReplaceExistingFile` **默认 `true`**，声明在 `FSolutionGenerator.h:11/15`、判定在 `CopyTemplate:141/151`；**唯一**显式传 `false`（只在缺失时写）的调用点是 `Game.csproj`）。
+⚠️ **2026-09-17 更正**：本条初版写成"`.csproj` 只在目标文件不存在时才重新生成（默认 `bReplaceExistingFile=false`）"——与快照 `85348c68` 和 HEAD **均不符**（两处默认值都是 `true`）；下面的问题（2）据此重写。
 
 **问题**
-（1）用户在设置面板把 `DotnetVersion` 选成 `V8`/`V9`（`UnrealCSharpSetting.h:66-72` 明确提供了这两个选项）时，生成的程序集 TFM 会低于捆绑运行时，而插件只分发 `shared/Microsoft.NETCore.App/10.0.x`（`CoreCLR.Build.cs:40`）；.NET 的默认 roll-forward 策略不允许跨主版本，运行时会因找不到匹配的 `Microsoft.NETCore.App 8.x/9.x` 而加载失败——这正是任务书担心的"不一致 = 运行时找不到运行时"。（2）由于 `.csproj` 生成后不会覆盖，**改回设置也不会重新生成**，需要用户手删 `Script/` 才能生效，故障更难排查。（3）`Latest - 1` 依赖"枚举最后一项恒等于下一版本号"这一隐含约定（`V8=8,V9=9,V10=10,Latest`），一旦有人插入 `V11`，`Latest` 变成 12，返回值变成 11，而运行时仍是 10.0.x（P3 级隐患，见 `F-CMP-015`）。
+（1）用户在设置面板把 `DotnetVersion` 选成 `V8`/`V9`（`UnrealCSharpSetting.h:66-72` 明确提供了这两个选项）时，生成的程序集 TFM 会低于捆绑运行时，而插件只分发 `shared/Microsoft.NETCore.App/10.0.x`（`CoreCLR.Build.cs:40`）；.NET 的默认 roll-forward 策略不允许跨主版本，运行时会因找不到匹配的 `Microsoft.NETCore.App 8.x/9.x` 而加载失败——这正是任务书担心的"不一致 = 运行时找不到运行时"。（2）~~由于 `.csproj` 生成后不会覆盖，改回设置也不会重新生成，需要用户手删 `Script/` 才能生效，故障更难排查。~~ **（2026-09-17 更正）**：除 `Game.csproj` 外，`.csproj` 与 `Shared.props` 每次生成都会覆盖 ⇒ 改回设置后**跑一次生成器**（工具栏 / `UnrealCSharp.Editor.Generator` / cook）即可把 TFM 重写回来；真正的坑是**生成器不在编辑器启动路径上**（不跑生成器就一直是旧值，见 `F-BLD-022`）＋ `Game.csproj` 确实只在缺失时写。排查难度下调、但不消失（用户得知道要手动触发一次生成）。（3）`Latest - 1` 依赖"枚举最后一项恒等于下一版本号"这一隐含约定（`V8=8,V9=9,V10=10,Latest`），一旦有人插入 `V11`，`Latest` 变成 12，返回值变成 11，而运行时仍是 10.0.x（P3 级隐患，见 `F-CMP-015`）。
 
 **建议**
 （1）把"运行时版本"作为单一事实来源：由 `ThirdParty` 模块通过定义导出主版本（如 `DOTNET_MAJOR_VERSION`）并在 `ReplaceTargetFramework` 中直接使用它，让 ini 只能选择"不高于捆绑版本"的值，否则在设置面板上报错；（2）在生成 `.csproj` 时把"当前运行时版本"写入文件（注释或自定义属性），当与设置不匹配时强制重生成并给出日志。

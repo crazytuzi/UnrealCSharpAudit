@@ -631,6 +631,17 @@ if (!FFileHelper::LoadFileToString(Result, *Src)) { UE_LOG(..., Error, TEXT("tem
 **验证方式**
 在已生成工程的 `Script.sln` 里加一个 `Project(...)`，再触发一次生成，观察是否被抹掉；对 `.sln` 加只读属性后生成，检查是否有任何日志输出。
 
+**2026-09-17 复测轮关联（部分修复，已随压缩提交 `cd0dfacb` 提交；见 `08-专项审计/06-复测轮：G7间歇项定位与null句柄缺陷（2026-09-17）.md` 的 `F-BLD-022`）**
+
+- ✅ **已做**：`CopyTemplate` 的写入策略由"裸默认布尔"改为**显式三态**（`FSolutionGenerator.h` 私有 `enum class ECopyTemplate : uint8 { KeepExisting, ReplaceExisting, ReplaceChanged }`）：
+  `Game.csproj`（`:97-105`）→ `KeepExisting`、`Shared.props`（`CopySharedProps()`）→ `ReplaceChanged`，其余 10 处仍为 `ReplaceExisting`（默认）。
+  `Shared.props` 之所以**必须**改成内容差异写：启动期新增的 `CopySharedProps()` 调用（`F-BLD-022` 的 ②）若沿用"每次覆盖"，会每次顶 props 的 mtime，
+  而 mtime 正是部署陈旧判据 `IsScriptPublishOutdated()` 的输入 ⇒ 会退化成"每次启动都重编"。
+- ⚠️ **仍存（本发现主体未修）**：`.sln`、**`Game.props`**（用户手改仍会被静默抹掉）、其余 `.csproj` 一律每次覆盖；建议 1（`.sln` 增量/备份）、
+  建议 2（模板版本标记）、建议 3（`Copy`/`SaveStringToFile` 失败日志）**均未做**；`FileManager.Copy`（`:143`）与 `SaveStringToFile` 的返回值仍未检查。
+- 📌 **对本报告的口径确认**：`F-GEN3-007` 的复核结论（"14 次 `CopyTemplate` 只有 `Game.csproj` 显式传 `false`，其余走默认 `true`"）**经 2026-09-17 复核依然正确**
+  （快照 `85348c68` 与 HEAD 的默认值均为 `true`）。同日 `05-编译器与跨版本/01` 与 `08-专项审计/06` 里"默认 `false`／props 只写一次"的表述**是错的**，已在那两处更正 —— 本报告无需改动。
+
 ---
 
 ### [F-GEN3-008] 所有替换都是"找不到占位符就静默不变"，模板与替换串之间没有任何一致性校验

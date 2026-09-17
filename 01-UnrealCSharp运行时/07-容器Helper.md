@@ -3,6 +3,7 @@
 > 本报告 30 条发现的**严重度见各 Finding 的「复核结论」字段**（确认 **19**、部分确认 **9**、证伪 **2**、无法验证 **0**；含 4 条判定为 `撤销（非缺陷）`、15 条级别调整）。
 > **新增关键依据**：本机 UE 5.6 引擎源码已可直接引用（`Engine\Source`），因此原先所有"引擎侧假设"（`FScriptArrayHelper` 是否析构、`FScriptXxx::Empty`/`RemoveAt` 是否维护哈希、`TArray::Reset` 语义、容器与 `T*` 的布局等价性）**已全部落地为可核对的行号**，见 §0.3 与各条的 `复核证据` 字段。
 > **处置更新（修复提交 `492ce5f7`）**：`F-HLP-023` 已修复（修复落在**调用侧**：`FRegisterMap`（`FindKey`/`Find`/`Get`/`GetEnumeratorKey`/`GetEnumeratorValue`）、`FRegisterArray::Get`、`FRegisterSet::GetEnumerator` 共 **7 处**取值实现改为先判 helper 是否命中，未命中回退到该提交新增的 `FPropertyDescriptor::GetDefaultValue`，不再把 `nullptr` 交给描述符 `Get`；见该 Finding 正文「处置（已执行）」）。**编号与计数口径不变**（仍 **30 条发现**：确认 **19**、部分确认 **9**、证伪 **2**、无法验证 **0**；含 4 条判定为 `撤销（非缺陷）`、15 条级别调整）；`严重度`/`复核结论`/`可达性` 等字段保持原值，只加处置标注。（修复提交：`492ce5f7` "Null Validation"）
+> **重判更新（2026-09-17）**：G1.1/G1.6 裁决后的**逐条重判已完成**（本轮为 G-7「最大残留风险面」的关闭轮，见 **§10**）。要点：① 三条「待重判」（`F-HLP-020`/`025`/`005`）**全部关闭**（`020`/`025` 维持 P1、`005` 维持 P2）；② **新增登记 2 条「已修」** —— `F-HLP-006`（`492ce5f7`）、`F-HLP-007`（`2113e1e9`）；③ **3 条级别/可达性变动** —— `F-HLP-016` 与 `F-HLP-024` **P1 → P2 / 活跃 → 潜伏**、`F-HLP-017` 维持 P2 但 **活跃 → 潜伏**；④ 本报告另有**三处自我更正**（§10.3：`InitializeValue` 的权威行号、`F-HLP-014` 的清单合并、`019`/`026` 的"无虚析构"机制表述）。本行上方各 Finding 的 `严重度`/`复核结论`/`可达性` 字段**保持原值**，请与 §10 并读。
 
 
 
@@ -69,7 +70,7 @@
 | E13 | 引擎**提供**哈希驱动的 `TMap`/`TSet` 查找，且 `FScriptMapHelper`/`FScriptSetHelper` 都有 `Rehash()` | `Containers/Map.h:1982-2001`（`FindPairIndex`）、`:2004-2014`（`FindValue`）；`Containers/Set.h:1944-1984`（`FindIndexImpl`/`FindIndex`/`FindIndexByHash`）；`UnrealType.h:4787`、`:5597`（`COREUOBJECT_API void Rehash();`） | **确认 F-HLP-021/028 的可行性论断**：不用哈希是**插件的实现选择，而不是引擎限制**（交叉印证 `08-专项审计/05` 的 F-PERF-007/008） |
 | E14 | `FScriptArrayHelper::GetRawPtr` 与 `TScriptArray::Remove/Insert` 的校验级别 | `UnrealType.h:3911-3920`（`checkSlow(!Index)` / `checkSlow(IsValidIndex(Index))`，**无 `check`**）、`ScriptArray.h:191-222`（`Remove` 内全部是 `checkSlow`）、`:55-76`（`Insert` 内是 `check`，非 Slow） | **确认 F-HLP-007**：越界在 **Shipping 下没有任何引擎兜底**（Dev/Debug 下也仅 `GetRawPtr` 的 `checkSlow`） |
 | E15 | `TArray::Reset(NewSize)` 的语义是"清空 + 预留容量"，**不是**"设成 N 个元素" | `Array.h:2259`（`void Reset(SizeType NewSize = 0)`）、`ScriptArray.h:149-161`（`TScriptArray::Reset`：`NewSize <= ArrayMax` → `ArrayNum = 0`；否则 `Empty(NewSize,...)`） | **证伪 F-HLP-009 的前提** |
-| E16 | 已裁决的 `Set` 不析构族 | `UnrealType.h:1434`（`InitializeValue` 的注释 "assumes over uninitialized memory"） | 支撑 F-HLP-014 维持 P1 |
+| E16 | 已裁决的 `Set` 不析构族 | ⚠️ **引用行号更正（§10.3 更正①）**：插件实际调用的 `FProperty::InitializeValue` 在 `UnrealType.h:1045-1061` —— 契约注释 *"The existing data is assumed invalid"* 在 `:1046`，实现按 `CPF_ZeroConstructor` 分派（`:1053` → `:1055 FMemory::Memzero` / `:1059 InitializeValueInternal`）。原引的 `:1434` 是 `TProperty<...>::InitializePropertyValue` 静态助手（`:1435-1438 return new (A) TCppType();`），**不是**同一个 API | 支撑 F-HLP-014 维持 P1（**依据升级、结论不变**） |
 | E17 | 分配器匹配性 | UBT 每模块 `PerModuleInline.gen.cpp` → `HAL/PerModuleInline.inl` 展开 `REPLACEMENT_OPERATOR_NEW_AND_DELETE` | 与本报告相关：`new` + `FMemory::Free` 的"内存损坏"已**证伪**，真缺陷是 `FMemory::Free` **跳过析构**（泄漏族），本报告 `NewRef`/`new FScriptXxx()` 路径不涉及 `FMemory::Free` |
 
 **已裁决（补录）**：`FScriptArrayHelper::ConstructItems` 的函数体**已裁决**：`Runtime/CoreUObject/Public/UObject/UnrealType.h:4155-4175` —— `:4164` 判 `CPF_ZeroConstructor` → `:4166` `Memzero`；**否则 `:4168-4174` 逐元素 `InitializeValue`**。**但该裁定的覆盖范围只到 `AddValues`（`:3998-3999`）与 `InsertValues`（`:4040`）**；而本报告 `F-HLP-005`/`F-HLP-014` 依赖的是 `AddUninitializedValues`（`:4015-4021`，**无** `ConstructItems` 调用）与单数 `AddUninitializedValue()`（`:4026-4029`）⇒ **该槽位确实未构造，两条发现仍然成立**。这是**正面确认**（G1.6 的裁定**并未**推翻本报告），请勿误读为"本报告被推翻"。
@@ -222,6 +223,7 @@ C# TArray<int>.Add(value)
 > **级别变动（相对本报告 30 条正文）**：上调 0 条、下调 0 条、维持 26 条、撤销 4 条。另 15 条级别调整（P0→P1 ×1、P1→P2 ×4、P1→P3 ×1、P2→P3 ×3、P2→P1 ×1、P3→P1 ×1、P1→撤销 ×1、P2→撤销 ×3 等）的逐条理由与证据行见各 Finding 的级别变动字段。
 > P0 的判定标准（本报告采用）：**不需要"误用输入"之外的任何特殊条件，正常 C# 用法即导致进程崩溃或内存损坏**。按该标准，`array[越界]`（F-HLP-006）与 `TSet` 枚举器竞态（F-HLP-027）都**不满足** P0，只有 `map[不存在的键]`（F-HLP-023）满足。
 > "正文位置"列给出该 Finding 的完整正文（现状代码/调用上下文/问题/建议/验证方式）所在小节。
+> 🔁 **重判轮（2026-09-17，见 §10）对本索引的影响**：`F-HLP-006`/`007` 补登为**已修**；`F-HLP-016`、`F-HLP-024` 由 **P1 降为 P2**、`F-HLP-017` 由活跃改为**潜伏** ⇒ 本索引的「**P1 × 10**」应收读为 **P1 × 8（其中 2 条已修、未修且活跃 6 条）**、「**P2 × 9**」应收读为 **P2 × 11**。各 Finding 自身的 `严重度`/`可达性` 字段**保持原值**（口径见 §10 开头）。
 
 | 编号 | 严重度 | 一句话结论 | 关键位置 | 正文位置 |
 |---|---|---|---|---|
@@ -1594,6 +1596,7 @@ void FArrayHelper::Empty(const int32 InSlack) const
 
 **建议**
 UE 提供了与 `FScriptArrayHelper` 对称的 `FScriptMapHelper`（含 `EmptyValues`/`FindPair`/`AddPair`/`RemovePair`，都是析构感知且**基于哈希**的）。建议整个 `FMapHelper` 改为基于 `FScriptMapHelper` 实现（同时解决 F-HLP-020、F-HLP-021、F-HLP-022 三件事）：
+> ⚠️ **两条更正（2026-09-17，§10.3 更正④；G10 亦已记「`FindPair` 不存在」）**：① 名单里的 `FindPair` 在引擎上**不存在**，哈希查找入口是 `FindValueFromHash`（`UnrealType.h:4952-4963`）/ `FindMapPairPtrWithKey`（`:4921-4926`，线性）；② 下面这行片段**参数不对** —— `FScriptMapHelper` 的常用构造是 **5 参** `(FProperty* KeyProp, FProperty* ValueProp, const void* InMap, const FScriptMapLayout&, EMapPropertyFlags)`（`:4383`），而插件 `FMapHelper` **不持有 `EMapPropertyFlags`**。⇒ **可直接施工的是本节给的第二版**（手工 `DestroyValue` 循环 → `ScriptMap->Empty`）；走 Helper 路线需先补 `MapFlags` 成员。
 ```cpp
 void FMapHelper::Empty(const int32 InExpectedNumElements) const
 {
@@ -1998,6 +2001,7 @@ void FSetHelper::Empty(const int32 InExpectedNumElements) const
 }
 ```
 更推荐改用引擎的 `FScriptSetHelper::EmptyValues`（与 `FScriptArrayHelper::EmptyValues` 对称），一次性解决 F-HLP-025/028/029。
+> ⚠️ **方法名更正（2026-09-17，§10.3 更正④）**：set 侧**没有** `EmptyValues` —— 析构感知的清空 API 是 **`FScriptSetHelper::EmptyElements(int32 Slack = 0)`**（`UnrealType.h:5534-5547`，`:5541` 先 `DestructItems` → `:5545` 再 `Set->Empty`）。`FScriptSetHelper(FProperty* InElementProp, const void* InSet, const FScriptSetLayout& InLayout)`（`:5356`）与插件现有的三个实参完全对得上 ⇒ **本建议可直接施工**，只需把方法名换成 `EmptyElements`。
 
 **验证方式**
 C# 用例：`var s = new TSet<string>(); for(i<100000) s.Add(k_i); s.Empty(0);` 循环 100 次，用 `MemReport` 观察 `FString` 分配量线性增长；或 C++ 单测断言 "`Empty` 触发的 `FString` 析构次数 == 元素个数"。
@@ -2444,4 +2448,150 @@ static_assert(sizeof(std::decay_t<T>) == sizeof(FScriptArray), "FScriptArray lay
 - 30 个 `F*PropertyDescriptor` 的实现（本报告只读了 `FPropertyDescriptor` 基类 + `FStrPropertyDescriptor` + 3 个 Container 描述符）——属"属性描述符"报告。
 - C# 侧 `Script/UE/CoreUObject/TArray.cs`/`TMap.cs`/`TSet.cs` 的完整实现（本报告只读了 `TArray.cs` 的索引器与相关方法）——属"C# 运行时"报告。
 - `CoreCLR`/`Mono`/`LeanCLR` 三个后端对 `IManagedHandle` 的实现差异。
+
+---
+
+## 10. 重判轮（2026-09-17）：G1.1/G1.6 裁决后的逐条落地
+
+> **本轮性质**：关闭 `00-总览/03` §1.5 第 18 行与 §5 三条「待重判」，即薄版 `09-…/00` §6 第 18 条登记的 **G-7「最大的残留风险面」**。
+> **只重判、不新增修复**：本轮**未改任何插件源码**；§5/§7 的修复建议**一条都没施工**（见 §10.4）。
+> **字段纪律**：按本报告既定口径，各 Finding 的 `严重度`/`复核结论`/`可达性` 字段**保持原值**，重判结果只以「重判」标注 + 本节登记的方式追加（与 G7 轮的处置登记同形）。
+>
+> **基准（引用任何行号前必读）**
+> ① **引擎 = `D:\file\UnrealEngine\5.6`**（`Version.h` = 5.6.0；`UnrealType.h` = **7345 行**、291,729 字节）。§0.3 的 E1–E17 已在该副本上**逐条复验通过**。
+> ⚠️ 本机另有 `E:\trunk\UnrealEngine-5.6`：同为 5.6，但 `UnrealType.h` = 284,384 字节（**与本次基准不是同一棵树**）⇒ **两份副本的行号不可混用**；本节一律用前者。
+> ② **插件 = 当时的 HEAD（工作区干净；已并入压缩提交 `cd0dfacb`）**。§5/§7 正文的行号仍指**分析快照 `85348c68`**；本节给**当前行号**，需要时在括号内标注快照行号。行漂移已逐条核对：`FArrayHelper.cpp` 347→**382**、`FMapHelper.cpp` 263→**266**、`FSetHelper.cpp` 189→**192**、`TPropertyValue.inl` 容器段整体后移（array `:858`→**`:930`**、map `:697`→**`:754`**、set `:776`→**`:840`**）。
+
+### 10.1 重判总表（P0 1 条 + P1 10 条；另并入与 `F-HLP-024` 同源的 P2 条目 `F-HLP-017` ⇒ 共 12 行）
+
+| 编号 | 快照口径 | 重判结论 | 关键依据（引擎 / 插件，均为本轮亲验） | 重判后 |
+|---|---|---|---|---|
+| `F-HLP-023` | P0 / 确认 / 活跃 | **维持「已修」**（口径不变） | 插件 `FRegisterMap.cpp:86-101`、`:103-118`、`:131-146`、`:180-195`、`:197-…` 五处取值实现已统一为「未命中 → `FPropertyDescriptor::GetDefaultValue(..., RETURN_BUFFER)`」 | 已处置（`492ce5f7`） |
+| `F-HLP-006` | P1 / 确认 / 活跃 | **已修（本轮新增登记）** | 插件 `FRegisterArray.cpp:123-141`：`if (const auto Value = ArrayHelper->Get(InIndex)) { …Get(Value,…) } else { GetDefaultValue(…) }` ⇒ 越界时 `nullptr` **不再**流到描述符 `Get`（§1.2 只登记了「7 处 helper 未命中」，**未登记这一处**）。**逐提交归属已核**：`git show 492ce5f7 -- …FRegisterArray.cpp` 显示判空与 `GetDefaultValue` 回退正是该提交引入的两行；`1551383b` 只是在其外层再套 `IsBufferLargeEnough(ArrayHelper, InBufferSize)` | **已处置（`492ce5f7` 修复 + `1551383b` 加缓冲校验）** |
+| `F-HLP-007` | P1 / 确认 / 活跃 | **已修（本轮新增登记）** | 插件已补前置校验：`InsertZeroed:203`、`InsertDefaulted:212`、`RemoveAt:222`、`Swap/SwapMemory:353-354`/`362-363`；引擎侧修复方向正确 —— `ScriptArray.h:195-198` 四条**全是 `checkSlow`**、`:57-61` 是硬 `check`、`:162-169`（`SwapMemory`）**一条校验都没有**，而 `DO_GUARD_SLOW` 在 Development/Test/Shipping = **0**、`DO_CHECK` 在 Test/Shipping = **0**（`Build.h:254/276/298/320`、`:301/323`；`AssertionMacros.h:327/345`）⇒ Shipping 下引擎零兜底 | **已处置（`2113e1e9`）** |
+| `F-HLP-001` | P1 / 确认 / 活跃 | **维持**：元素析构确实被跳过、元素缓冲确实被释放 | 引擎：`ScriptArray.h:322-357`（`FScriptArray` **未声明析构**，且**根本不是 `TArray` 的基类** —— `Array.h:650-652` 无基类子句）；`Array.h:965-972`（`DestructItems` 只存在于 `~TArray` 内）；`ContainerAllocationPolicies.h:683-693`（`~ForAnyElementType` → `:690 Free(Data)`）。插件：`FArrayHelper.cpp:36`（`delete ScriptArray`）、`TPropertyValue.inl:930`（唯一 `true,true` 的 array 构造点） | P1 / 活跃（不变） |
+| `F-HLP-014` | P1 / 确认 / 活跃 | **维持 P1，范围收窄**：本报告范围内真正的「活值 `Dest`」**只有 1 个点**（`FArrayHelper.cpp:137`） | 引擎 `UnrealType.h:1045-1061`：`InitializeValue` 的契约原文 *"**The existing data is assumed invalid**"*（`:1046`），实现按 `CPF_ZeroConstructor` 分派 —— 置位则 `:1055 FMemory::Memzero`、否则 `:1059 InitializeValueInternal`；`CPF_ZeroConstructor` 由 `TIsZeroConstructType<TCppType>` 决定（`:1472`）⇒ 对**活** `FString` 槽位必然丢弃其缓冲引用 = 确定性泄漏。插件侧另 4 个点**语义正确**：`Add`（`:294`）走 `AddUninitializedValue`、`FMapHelper::Set` 新键（`:203`）走 `AddUninitialized`、`FMapHelper::Set` existing-key（`:221`，其前 `:218` 已 `DestroyValue`）、`FSetHelper::Add`（`:105`，仅新建分支） | P1 / 活跃（**引用清单更正**，见 §10.3 更正②） |
+| `F-HLP-016` | P1 / 确认 / 活跃 | **机制成立，但前提不可达 ⇒ 降为 潜伏** | 插件 5 个构造点**没有一个能传空属性**：`TPropertyValue.inl:713`/`746`/`754` 全在 `if (KeyProperty != nullptr && ValueProperty != nullptr)` 内（`:705`/`:736`），`FMapPropertyDescriptor.cpp:55`/`77` 传引擎已解析的 `Property->KeyProp`/`ValueProp`。引擎 `PropertyMap.cpp` 的 `FMapProperty` 构造函数原文 `KeyProp = nullptr; ValueProp = nullptr;` + 注释 *"These are expected to be set post-construction by AddCppProperty"* ⇒ **引擎契约允许空**，故记风险而非无风险 | **P1 → P2 / 潜伏** |
+| `F-HLP-017` | P2 / 确认 / 活跃 | **降为 潜伏**（与 `F-HLP-024`(b) 同源） | 触发需「属性对象非空、但 `FPropertyDescriptor::Factory` 不支持其类型」。本轮做了**两侧白名单差集**：`FTypeBridge::Factory` 的覆盖面是描述符工厂的**超集**，唯一例外 `FFieldPathProperty` 在桥接侧就先 `return nullptr`（`FTypeBridge.cpp:346-348`）⇒ TPropertyValue 路径不可达；引擎属性类枚举的差集只剩 ① `FLargeWorldCoordinatesRealProperty`（`UnrealType.h:2357`，UHT 仅在显式关键字 `FLargeWorldCoordinatesReal` 下产生，且在 `NoExportTypes.h` 之外**直接报错**：`UhtLargeWorldCoordinatesRealProperty.cs:69-72`）与 ② Verse 专属类（`FVerseStringProperty`/`FVCellProperty`/`FVValueProperty`/`FVRestValueProperty`，非 UPROPERTY 可达） | **P2 / 潜伏** |
+| `F-HLP-019` | P1 / 部分确认 / 活跃 | **维持**；机制表述更正（见 §10.3 更正③） | 引擎：`Map.h:2076`（`TScriptMap` 的唯一成员是 `TScriptSet<AllocatorType> Pairs`）、`:2085-2092`（`static_assert` 逐成员对齐 `TScriptMap` ↔ `TMap<int32,int8>`）、`:2119-2133`（`class FScriptMap : public TScriptMap<FDefaultSetAllocator, FScriptMap>`，**未声明析构**）、`Set.h:2052-2054`（`Elements`/`Hash`/`HashSize`）、`ContainerAllocationPolicies.h:683-693`（两块缓冲由 allocator 基类析构释放）。插件：`FMapHelper.cpp:47`（`delete ScriptMap`）、`TPropertyValue.inl:754-755`（唯一 `true,true` 的 map 构造点） | P1 / 活跃（不变） |
+| `F-HLP-020` | P1 / 确认 / 活跃 · **待重判** | **维持 P1；「待重判」关闭** | 插件 `FMapHelper.cpp:68-74` 只调 `ScriptMap->Empty(...)`，全文无 `DestroyValue`；引擎 `Map.h:1955-1958`（`TScriptMap::Empty` → `Pairs.Empty`）→ `Set.h:1843-1865`（`Elements.Empty(Slack,…)` + 重建 `Hash` 循环，**逐行确认不触碰元素析构**） | P1 / 活跃 ✅ **结案** |
+| `F-HLP-024` | P1 / 确认 / 活跃 | **降为 潜伏**：两个面均无当前可达触发 | (a) `ScriptSetLayout` 未初始化：同 `F-HLP-016` —— 构造点全在非空检查内（`TPropertyValue.inl:808`/`833`/`840`）或传引擎 `Property->ElementProp`（`FSetPropertyDescriptor.cpp:55`/`77`）；(b) `Factory` 返回值未判空（`FSetHelper.cpp:25` 解引用）—— 同 `F-HLP-017` 的差集结论 | **P1 → P2 / 潜伏** |
+| `F-HLP-025` | P1 / 确认 / 活跃 · **待重判** | **维持 P1；「待重判」关闭** | 插件 `FSetHelper.cpp:58-64` 只调 `ScriptSet->Empty(...)`；引擎 `Set.h:1843-1865` 同上（不析构） | P1 / 活跃 ✅ **结案** |
+| `F-HLP-026` | P1 / 部分确认 / 活跃 | **维持**；机制表述同 `F-HLP-019` 更正 | 引擎 `Set.h:2115-2129`（`class FScriptSet : public TScriptSet<FDefaultSetAllocator, FScriptSet>`，未声明析构）、`:2078-2089`（`static_assert` ↔ `TSet<int32>`）、`ContainerAllocationPolicies.h:683-693`。插件 `FSetHelper.cpp:43`、`TPropertyValue.inl:840` | P1 / 活跃（不变） |
+
+**重判后的级别变动（3 条）**：`F-HLP-016` 与 `F-HLP-024` **P1 → P2**（两者同时 活跃 → 潜伏）；`F-HLP-017` 维持 P2 但 活跃 → 潜伏。
+⇒ `07` 的 P1 中，**未修且活跃**者由 10 条收窄为 **6 条**（`F-HLP-001`/`014`/`019`/`020`/`025`/`026`），另 2 条（`F-HLP-006`/`007`）**已修**、2 条（`F-HLP-016`/`024`）**降级为潜伏**。
+> ⚠️ **不动总计数**：`09-…/01` 的「P1 128 / P2 267」是 **2026-09-11 汇总时点**的口径；本轮只改**具体行**的级别与可达性，并同步 `00-总览/03` §5 的「原级别 → 现级别」视图（理由见 §10.4 第 3 条）。
+
+### 10.2 附带结案（非 P0/P1，但同属本轮「待重判」登记面）
+
+**① `F-HLP-005`（总表 P2 / 潜伏；`00-总览/03` §6 误记为 P1）—— 重判完成：成立，维持 P2 / 潜伏。**
+判据（引擎逐条）：
+- `AddZeroed` 不构造：`ScriptArray.h:93-98` = `Add(...)` + `FMemory::Memzero`（插件 `FArrayHelper.cpp:302` 直接调它）；
+- `InsertZeroed` 不构造：`ScriptArray.h:50-54` = `Insert(...)` + `Memzero`（插件 `:205`）；
+- `AddUninitialized` 不构造：`UnrealType.h:4015-4021`（只有 `Array->Add(...)`，**无** `ConstructItems`），单数 `:4026-4029` 转发到它（插件 `:195`）；
+- **对照**：`AddValues`（`:3996-4001`）、`AddValue`（`:4006-4009`）、`InsertValues`（`:4035-4041`）**都**调 `ConstructItems` ⇒ 插件用 `InsertValues` 的 `InsertDefaulted`（`:216`）与用 `AddUninitializedValue` + `Set` 的 `Add`（`:292-294`）**语义正确**。
+- ⚠️ **§0.3 补录中「`FScriptArrayHelper::AddZeroed` 的函数体无法裁决」一项就此结案**：**该方法在 UE 5.6 的 `FScriptArrayHelper` 上不存在**（该类全文 = `UnrealType.h:3849-4236`；`AddZeroed`/`InsertZeroed`/`AddDefaulted`/`InsertDefaulted`/`RemoveAt`/`RemoveRange`/`SetNum`/`Reset`/`Empty`/`Shrink`/`Max` 均 **NOT FOUND**，`RemoveAt` 只存在于 map/set Helper：`:4765`/`:5578`）。插件调用的是 `FScriptArray::AddZeroed`（已裁决为 `Add` + `Memzero`），故**无需再裁决**。
+- **更正 `00-总览/03` §6 把本条记为 P1** —— 与 `09-…/01` 总表的 P2 不一致，以总表为准。
+
+**② `F-LEAK-012`（`08-…/02`）—— 以 G1.1 为前提的部分重判完成，结论与 `00-总览/03` §1.5 第 8 行一致、无需再改。**
+①「元素缓冲泄漏」**不成立**（`ContainerAllocationPolicies.h:683-693` 释放 `Data`）；②「元素析构缺失」**成立**（`Array.h:965-972` 的 `DestructItems` 不可达）；③原文建议的 `FMemory::Free(ScriptArray)` 修法**必须继续撤销**（保留 `delete`、只补元素析构）。
+> **引擎自身的权威拆卸序列（本轮新增依据，供修复时照抄）**：`PropertyArray.cpp:1188-1195` 的 `FArrayProperty::DestroyValueInternal` = `FScriptArrayHelper::EmptyValues()` + `DestroyContainer_Unsafe()`（`UnrealType.h:4046-4058` + `:4119-4122`）—— 注意 `DestroyContainer_Unsafe` **只就地析构容器、不对对象内存调 `operator delete`**；插件那条路径的对象是 `new std::decay_t<T>(...)` 造的，正确修法是**按真实类型 `delete`**（类型擦除销毁器），而不是照抄引擎的就地拆卸。
+
+**③ G1.6「5 项无法裁决」再结 2 项（本轮）**：`Rehash` 的函数体**已定位** —— `FScriptMapHelper::Rehash` 声明在 `UnrealType.h:4787`、定义在 `PropertyMap.cpp:1666-1675`（`Map->Rehash(MapLayout, [this](const void* Src){ return KeyProp->GetValueTypeHash(Src); })`），`FScriptSetHelper::Rehash` 声明在 `:5597`、定义在 `PropertySet.cpp:1027-1033`；二者**只重建哈希链**，既不构造也不析构元素。`FScriptMap::FindIndex` 的函数体链**已定位** —— `FindIndex` → `TScriptSet::FindIndexImpl`（`Set.h:1944-1962`，真正的桶遍历：`KeyHash & (HashSize - 1)` + `HashNextId` 链）。
+⇒ G1.6 的 5 项至此 **4 项已结**：`AddZeroed`/`ConstructItems`（§10.2①）、`FScriptMap::FindIndex` 与 `Rehash` 函数体（本项）、`FString::Equals` 默认参数（`00-总览/03` §1.5 第 17 行已裁决 = 默认 `CaseSensitive`）；**仅 `TFieldIterator` 未结**。
+> ⚠️ **`F-HLP-021`/`028` 的「收益未量化」仍开放**：本轮只证明"引擎提供哈希入口且函数体不是空操作"，**没有**给出插件改用它之后的实测收益。
+
+**④ §9.1 的存疑项 U3 / U6**：`U3`（`FPropertyDescriptor::Factory` 白名单覆盖面）**部分结案**（§10.1 的 `F-HLP-017` 行给了两侧差集）；`U6`（`FScriptMap::GetScriptLayout` 跨版本签名）**维持存疑** —— 本轮只确认 5.6 下该 4 参调用能编译（G7 轮的 UBT 构建结论），**跨版本未验**。
+
+### 10.3 本报告自我更正（四处，均为"结论不变、依据/理由/建议更正"）
+
+**更正①（§0.3 表 E16 的引用行号）**：E16 把 `UnrealType.h:1434` 记为 "`InitializeValue` 的注释"。该行实为 `TProperty<...>::InitializePropertyValue` 的**静态助手**（`:1434` 注释 + `:1435-1438` 的 `return new (A) TCppType();`），**不是**插件调用的那个 API。插件 `FStrPropertyDescriptor::Set` 调的是 `FProperty::InitializeValue`，权威行 = `UnrealType.h:1045-1061`（契约原文 *"The existing data is assumed invalid"* 在 `:1046`）。`F-HLP-014` 的结论不变，依据升级。
+
+**更正②（`F-HLP-014` 的 `复核证据` 合并了两张相反的清单）**：原文写"已裁决权威修复清单含 `FArrayHelper.cpp:137`、`:269`、`FMapHelper.cpp:200`、`:218`、`FSetHelper.cpp:102`"。按 §1.1，**后四个恰恰是「不要改」的点**（它们的 `Dest` 来自 `AddUninitialized*` 或已被前置 `DestroyValue`）。此外 `FMapHelper.cpp:218`（当前 `:221`）归入"不要改"的**理由**在快照上也不成立：该行位于 `if/else` **之外**（快照 `:195-219` 逐行核对），existing-key 分支已在 `:215` 先 `DestroyValue` ⇒ 真正的理由是"**先杀后写**"，而不是"来自 `AddUninitialized*`"。⇒ **本报告范围内的活值点只有 `FArrayHelper.cpp:137` 一个**（另 3 个在 `FRegisterProperty.cpp:35`/`:64`、`FOptionalHelper.cpp:91`，不属本报告）。
+
+**更正③（`F-HLP-019`/`026` 的机制表述）**：原文写"`delete` 静态类型不匹配 → **无虚析构** → `~TMap<K,V>()`/`~TSet<T>()` 不执行"，措辞暗含**继承**关系。引擎事实是 **`FScriptMap`/`FScriptSet` 根本不在 `TMap`/`TSet` 的继承链上**：`TScriptMap` 是独立类型、其唯一成员是 `TScriptSet<AllocatorType> Pairs`（`Map.h:2076`），布局等价由引擎自己的 `static_assert` 保证（`Map.h:2085-2092`、`Set.h:2078-2089`）；`TArray` 同理（`Array.h:650-652` 无基类子句，其首成员 `AllocatorInstance`（`:3581`）与 `FScriptArray` 的基子类**恰好同类型同偏移**）。⇒ 后果不变（**元素析构被跳过、容器缓冲被释放**），但理由应改为「**静态类型与动态类型无关 + 布局等价靠 `static_assert` 保证**」，且该 `delete` 按 `[expr.delete]` 本身是 UB（对 array 侧还多一条：`delete` 会在容器地址上执行 `operator delete` —— 仅当该对象确实由 `operator new` 分配时才成立；插件那条路径是 `new std::decay_t<T>(...)`，成立）。
+
+**更正④（`F-HLP-020`/`025` 修复建议里的 API 名与签名）**：两处建议都指向"改用引擎析构感知的 Helper"，方向正确，但**不能照抄**：
+- `F-HLP-025` 写"更推荐改用引擎的 `FScriptSetHelper::EmptyValues`" —— **set 侧没有这个方法**。析构感知的清空 API 是 **`FScriptSetHelper::EmptyElements(int32 Slack = 0)`**（`UnrealType.h:5534-5547`：`:5541 DestructItems(0, OldNum)` → `:5545 Set->Empty(...)`，**先析构、后清空**）。其构造签名 `FScriptSetHelper(FProperty* InElementProp, const void* InSet, const FScriptSetLayout& InLayout)`（`:5356`）与插件现有的 `ElementPropertyDescriptor->GetProperty()` + `ScriptSet` + `ScriptSetLayout` **恰好对得上** ⇒ **set 侧改动可直接施工**（只差把方法名写对）。
+- `F-HLP-020` 的建议片段 `FScriptMapHelper Helper(KeyPropertyDescriptor->GetProperty(), ScriptMap, ScriptMapLayout);` **参数个数与顺序都不对**：真实构造是 5 参 `FScriptMapHelper(FProperty* InKeyProp, FProperty* InValueProp, const void* InMap, const FScriptMapLayout& InMapLayout, EMapPropertyFlags InMapFlags)`（`:4383`；另有 `(const FMapProperty*, const void*)` 重载在 `:4378`）。而插件 `FMapHelper` **不持有 `EMapPropertyFlags`**（它自己用 `FScriptMap::GetScriptLayout(...)` 算 layout，未保存 flags）⇒ map 侧**可直接施工的是报告给的第二版**（手工 `DestroyValue` 循环 + 之后 `ScriptMap->Empty`），或先补一个 `MapFlags` 成员。⚠️ **`FScriptMapHelper::EmptyValues` 本身确实存在且析构感知**（`:4703-4719`），错的只是那行片段。
+- 另：本报告对引擎的引用 `Set.h:1944-1959`（`FindIndexImpl`）**真实行区间是 `:1943-1962`**（已按 `:1944-1962` 记入 §10.2③）。
+
+### 10.4 未做 / 明确不做（不得当结案）
+
+1. **未改任何插件源码**：本轮是纯重判。§5/§7/§8.2 的修复建议（类型擦除销毁器、`EmptyValues`/`EmptyElements` 拆分、`Set`/`ConstructAndSet` 拆分、`GetDefaultValue` 语义）**均未施工**。
+2. **未做运行期验证**：`F-HLP-014`（`array[i] = str` 反复赋值）、`F-HLP-019`/`026`（传值 `TMap`/`TSet` 销毁）、`F-HLP-020`/`025`（`Empty` 前后 `FString` 分配计数）**全部只有静态判据** ⇒ 仍属薄版 §6 第 1/15 条的实机面，**不得**因本轮重判而被读作"已验证"。
+3. **总表分布计数未动**：本轮改了 `09-…/01` 中 `F-HLP-016`/`017`/`024` 三行的级别/可达性，但**没有**重算 §0 的 `P1 128 / P2 267`（那是 2026-09-11 汇总时点的口径，重算需要一次**重新汇总**）。⇒ 引用"P1 128"时须知：其中 2 条（016/024）现已降为 P2。
+4. **`F-HLP-018`（P2）未重判**：它与 `F-HLP-016`/`017` 同属"半初始化对象"族（`FMapHelper::Deinitialize` 要求两个描述符同时非空才释放），但不在本轮 P0/P1 范围内 —— **边界如实写出，不当结案**。
+5. **本轮未逐条重判 P2/P3 的其余 19 条**（`F-HLP-002/003/004/005/008`–`013/015/018/021/022/027`–`030`）；其中 `F-HLP-005` 与三条"待重判"已在 §10.2 结案。
+
+### 10.5 复核方式（可重跑）
+
+```powershell
+# ① 引擎行号（本轮全部在 D:\file\UnrealEngine\5.6 上核过；注意别用 E:\trunk 那份）
+$eng = 'D:\file\UnrealEngine\5.6\Engine\Source'
+Select-String -Path "$eng\Runtime\CoreUObject\Public\UObject\UnrealType.h" -Pattern 'AddUninitializedValues|ConstructItems|DestructItems|FORCEINLINE void InitializeValue|CPF_ZeroConstructor\)' 
+Select-String -Path "$eng\Runtime\Core\Public\Containers\ScriptArray.h" -Pattern 'AddZeroed|InsertZeroed|void Remove\(|SwapMemory'
+Select-String -Path "$eng\Runtime\Core\Public\Containers\Set.h"      -Pattern 'void Empty\(int32 Slack, const FScriptSetLayout|void RemoveAt'
+Select-String -Path "$eng\Runtime\Core\Public\Containers\Map.h"      -Pattern 'void Empty\(int32 Slack, const FScriptMapLayout|class FScriptMap'
+Select-String -Path "$eng\Runtime\Core\Public\Containers\ContainerAllocationPolicies.h" -Pattern 'FORCEINLINE ~ForAnyElementType'
+# ② 快照行号（插件仓库内；报告正文的行号基准）
+cd <插件根>
+git show 85348c68:Source/UnrealCSharp/Private/Reflection/Container/FArrayHelper.cpp | Select-Object -Skip 262 -First 10
+git show 85348c68:Source/UnrealCSharp/Private/Reflection/Container/FMapHelper.cpp  | Select-Object -Skip 194 -First 26
+# ③ 当前行号（压缩提交 `cd0dfacb`）
+Select-String -Path 'Source\UnrealCSharp\Private\Reflection\Container\FArrayHelper.cpp' -Pattern 'delete ScriptArray|AddUninitializedValue|InsertZeroed|RemoveAt|DestroyValue'
+Select-String -Path 'Source\UnrealCSharp\Private\Reflection\Container\FSetHelper.cpp'   -Pattern 'delete ScriptSet|ScriptSet->Empty'
+Select-String -Path 'Source\UnrealCSharp\Private\Domain\Interop\FRegisterMap.cpp'      -Pattern 'GetDefaultValue'
+Select-String -Path 'Source\UnrealCSharp\Public\Binding\Core\TPropertyValue.inl'       -Pattern 'new FArrayHelper\(|new FMapHelper\(|new FSetHelper\('
+```
+
+---
+
+## 11. 修复轮（2026-09-17）：6 条泄漏族 P1 收口（**已提交；压缩提交 `cd0dfacb`**）
+
+> **范围** = §10 重判后仍**未修且活跃**的 6 条 P1：`F-HLP-001`、`F-HLP-014`、`F-HLP-019`、`F-HLP-020`、`F-HLP-025`、`F-HLP-026`。
+> **本轮只改插件原生侧**（7 个文件；**本补丁 +96/−16**，压缩提交里属本轮的部分计 **+98/−18**，差额 2 行见 §11.4 第 4 条）；**不动 C# 侧、不动生成器、不动 ini**。基准：插件当时 HEAD（= 父提交 `1551383b` ＋ F-REG-019 两处判空）→ 本轮改动已并入压缩提交 **`cd0dfacb`**（父 `1551383b`，2026-09-17 19:46:35 +0800，20 文件 +329/−95）；引擎 = `D:\file\UnrealEngine\5.6`。
+> **口径**：无新增注释 / 日志 / 异常 / `ensure` / try-catch；失败一律静默收敛（与 G7、复测两轮同口径）。
+
+### 11.1 逐条改动（当前工作区行号）
+
+| 编号 | 改动 | 位置 |
+|---|---|---|
+| `F-HLP-001`/`019`/`026` | 新增**类型擦除销毁器** `using FDataDeleter = void (*)(void*);`，作为构造函数的**第 5 个参数**（默认 `nullptr`）；`Deinitialize` 优先调它、为空则回落到原 `delete`；三个 `bNeedFreeData = true` 的构造点改传 `[](void* InData) { delete static_cast<std::decay_t<T>*>(InData); }` | `FArrayHelper.h`/`.cpp`、`FMapHelper.h`/`.cpp`、`FSetHelper.h`/`.cpp`；`TPropertyValue.inl`（map `:756`、set `:845`、array `:939` —— 三处均为**唯一** `true,true` 点） |
+| `F-HLP-020` | `Empty` 先逐元素 `KeyPropertyDescriptor->DestroyValue(Data)` + `ValuePropertyDescriptor->DestroyValue(Data + ValueOffset)`，**之后**才 `ScriptMap->Empty(...)` | `FMapHelper.cpp` `Empty()` |
+| `F-HLP-025` | 同上（单元素）：`ElementPropertyDescriptor->DestroyValue(...)` 之后才 `ScriptSet->Empty(...)` | `FSetHelper.cpp` `Empty()` |
+| `F-HLP-014` | `Set` 由"直接写"改为"**先 `DestroyValue(Dest)` 再 `Set`**"（`Dest` 是 `IsValidIndex` 命中的**活值**槽位） | `FArrayHelper.cpp` `Set()` |
+
+**调用面核对（施工前做的）**：`ArrayHelper->Set(` 全仓**只有 1 个**调用点（`FRegisterArray.cpp:151`，即 C# `array[i] = v`）；`MapHelper->Empty(`/`SetHelper->Empty(` 各**只有 1 个**（`FRegisterMap.cpp:38`/`FRegisterSet.cpp:34`）⇒ 四处改动的语义边界都是确定的、无旁路。
+
+### 11.2 两处「未照抄报告建议」（必读）
+
+**① 销毁器**没有替换 `bNeedFreeData`，而是**并列新增第 5 参**。报告 §8.2 的建议是把该 `bool` 换成销毁器；本轮保留 `bool` 并给新参加默认值 ⇒ **10 个非拥有构造点一行未改**（`FArrayPropertyDescriptor.cpp:39`/`:56`、`FMapPropertyDescriptor.cpp:55`/`:77`、`FSetPropertyDescriptor.cpp:55`/`:77`、`TPropertyValue.inl:898`/`:923`/`:713`/`:746`/`:808`/`:833`），且**未传销毁器时的行为与修改前逐字等价**（走回落分支）。代价：保留了一条"`bNeedFreeData=true` 但未传销毁器"的隐患形态 —— 该形态当前无实例，且新增拥有点必须显式传销毁器才会正确。
+
+**② `Empty` 用手工循环，不用引擎的 `EmptyValues`/`EmptyElements`**。§10.3 更正④ 曾建议 set 侧直接用 `FScriptSetHelper::EmptyElements`。本轮**不采用**，两个独立理由：
+- **调用形态不同（决定性）**：插件的 `FPropertyDescriptor::DestroyValue` 最终落到 `Property->DestroyValue(Dest)`（`UnrealType.h:968-974`，**直接**调 `DestroyValueInternal(Dest)`、**不施加偏移**），而引擎两个 Helper 用的是 `ElementProp->DestroyValue_InContainer`（`:5872`；map 侧 `:5185`/`:5198`，`UnrealType.h:981-987` 会先 `ContainerPtrToValuePtr<void>(Dest)`）。插件全线（`FMapHelper::Remove`、`FSetHelper::Remove`、`FArrayHelper::RemoveAt`）用的都是前者 ⇒ 手工循环与之**同形**、且这些路径已被 1700 例套件覆盖。
+- **会绕过插件的描述符层语义**：`FPropertyDescriptor::DestroyValue` 是 `virtual`，且 `FEnumPropertyDescriptor::DestroyValue` 是一个**空覆写**（`FEnumPropertyDescriptor.cpp:24-26`）—— 即插件**明确声明**"枚举元素的析构 = no-op"；引擎 Helper 直接对 `FProperty` 操作，不经过这一层。
+- 附带（§10.3 更正④ 已记）：map 侧本来也用不了 Helper —— 其常用构造是 **5 参**、含插件并不持有的 `EMapPropertyFlags`。
+
+**③ 三处重复是刻意的**：`using FDataDeleter = void (*)(void*);` 在三个 Helper 里**各自声明一次**、销毁 lambda 也在三个构造点**各写一遍**（仅容器类型不同）。未上提到共享头 / 公共辅助：① 这三个类本就无共同基类，且 §8.1 已记录三者"逐字重复或同构"是既有风格；② 上提需要动共享头（`FPropertyDescriptor.h` 等）⇒ 扩大改动面，与"本轮只做泄漏族收口"的范围不符。若将来 §8.2 的统一抽象落地，这三处应一并收敛。
+
+### 11.3 验证（可复核）
+
+| 项 | 命令 / 判据 | 结果 |
+|---|---|---|
+| C++ 构建 | `Engine\Build\BatchFiles\Build.bat UnrealCSharpTestEditor Win64 Development -Project=… -WaitMutex` | **Result: Succeeded**（52 s；重编 `Module.UnrealCSharp`、重链 `UnrealEditor-UnrealCSharp.dll`；仅测试工程既有的 `TSoftObjectPtr` 弃用告警 2 条，与本次改动无关） |
+| 运行期回归（**最终形态**） | `Saved\Retest\run-batch.ps1 -Tag P1-leak-fix-final -Runs 1`（当前 ini：Windows = **CoreCLR**） | **1700 例 / 0 失败**（`out\P1-leak-fix-final\P1-leak-fix-final-r01-csv01.csv`）；与基线 `baseline\…-2026-9-16-12-31-48-936.csv` **用例名集合逐名一致**（仅新有 **0** / 仅基线有 **0**）。⚠️ 格式修订后**重新构建并复跑**过一次，归档证据对应最终形态 |
+| **元素类型安全性审查**（针对 `F-HLP-014` 那处 `DestroyValue` + `Set`） | 逐个读 **23 处** `Set(void* Src, void* Dest) const` 覆写 + 唯一的 `DestroyValue` 覆写 | 非基类的 22 处里，**凡目标非 POD 者一律"重新构造后写入"**（体内含 `InitializeValue`/`CopyCompleteValue`）；不含的只有 3 处：基类（空实现）、`FBoolPropertyDescriptor`（POD）、`FEnumPropertyDescriptor`（`CopySingleValue` 写入 POD，且其 `DestroyValue` 是**空覆写**）⇒ "先 `DestroyValue` 再 `Set`" 对**所有**元素类型均安全（关键点：`~FString` **不会**把缓冲指针置空 —— `Array.h:970-971` 明确写"data pointer 不失效"，所以必须先 `DestroyValue` 再靠 `Set` 内的 `InitializeValue` 清零） |
+| 代码风格自审 | 行宽（tab=4，阈值 120）、`git diff --check`、与仓内既有排版范例比对 | 修订后**无超 120 列的行**（修订前 my 3 处 lambda 曾达 126/126/130，已按 `FDynamicRegistry.cpp:62-70` 的 lambda 排版改回）、**无空白错误**；命名沿用 `InXxx` / `bXxx` / 成员 PascalCase；`Deinitialize` 的"正向 `if` 包裹 + 末尾默认"与仓内同形 |
+| 改动面 | `git show --stat cd0dfacb`（其中属本轮的 7 文件） | 7 文件 **+98/−18**（其中**本补丁 +96/−16**，另 2 行为维护者的对齐修订，见 §11.4 第 4 条）；新增注释 0 / `throw` 0 / 日志 0 / `try`-`catch` 0 / `ensure` 0 |
+
+### 11.4 未做 / 边界（不得当结案）
+
+1. **未量化泄漏收益**：套件的容器用例只有 `TArray<int>`、`TArray<UObject>`、`TSet<int>`/`TSet<UObject>`、`TMap<int,int>`/`TMap<UObject,UObject>`（`Script/Game/UnrealCSharpTest/UnitTest/Container/**`），**没有 `TArray<FString>` / `TMap<FString,…>` 这类"元素自身拥有资源"的类型** ⇒ 本轮的运行期结论**只是"无回归"**，**不是**"泄漏已消失"的实证。量化仍属薄版 §6 第 15 条。
+2. **未跨后端复跑**：只跑了当前 ini 的后端（CoreCLR）。三处改动全在原生侧、与后端无关，但 **LeanCLR 未复跑**。
+3. **`Empty` 与 `Remove` 一样不判空描述符**：新增的析构循环会在 `KeyPropertyDescriptor`/`ElementPropertyDescriptor` 为空时解引用（原实现只用 `ScriptMapLayout`）。该状态正是 §10.1 的 `F-HLP-016`/`F-HLP-024`（**潜伏、无可达构造点**），且同文件 `Remove` 本来就是同一形态 ⇒ **为保持一致未加守卫**；若将来出现可传空属性的构造点，`Empty`/`Remove`/`Set` 三处需一起加。
+4. **已提交（压缩提交 `cd0dfacb`）**：本轮泄漏族的 7 个文件 **+98/−18** 已并入 **`cd0dfacb216b79a4e831e102612c070164d6ab2a`**（父 `1551383b`，2026-09-17 19:46:35 +0800，20 文件 +329/−95）；`09-…/01` 六行已同步为 **`已处置（cd0dfacb 已修复）`**。
+   ⚠️ **提交数比本补丁多 2 行（+96/−16 → +98/−18）**：维护者在 `FMapHelper.cpp` / `FSetHelper.cpp` 里把 **`#if STD_CPP_20` / `#else` 两分支的 `Rehash` 行对齐到同一列**（`FMapHelper.cpp:229`、`FSetHelper.cpp` 同处）——**纯缩进、非本修复内容**，且**发生在本轮运行期回归之后** ⇒ 归档的运行期证据（`P1-leak-fix-final`）对应的是"提交树去掉这 2 行缩进"的状态；两者只差空白、无语义差异，**提交后未重跑**（如需严格对齐，重跑一次 `run-batch.ps1` 即可）。
+5. **`F-HLP-014` 的另 3 个活值点未动**：`FRegisterProperty.cpp:35`/`:64`、`FOptionalHelper.cpp:91` —— 属 §1.1 权威清单的其余面、不在本报告范围（归 G11 族）。
 
