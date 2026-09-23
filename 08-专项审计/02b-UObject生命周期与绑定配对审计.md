@@ -529,6 +529,15 @@ const TArray<FClassReflection*>& FDynamicGeneratorCore::GetClassMetaDataAttribut
 **验证方式**
 grep `static TArray<FClassReflection\*>` → 命中 `FDynamicGeneratorCore.cpp` 6 处；复现用例：编辑器内改一个 C# 动态类的 `[UProperty]` 特性 → 首次编译（第 1 次重载）正常 → 再改一次 → 第 2 次重载时在 `SetFieldMetaData`（`:792`）打 `check(IsValidLowLevel())` 或直接看是否崩溃。
 
+**处置（2026-09-22，本轮 G4 收口；✅ 已提交 `8c54c598`）**
+
+与 `F-REFL-002`（[02-…/01](../02-UnrealCSharpCore核心/01-反射注册表FReflectionRegistry.md)）、`F-DYN-006`（[02-…/03](../02-UnrealCSharpCore核心/03-动态类型生成.md)）是**同一处代码的三次登记**，一次修复动作：6 个 getter 去掉函数级 `static` 缓存、返回 by-value `TArray<FClassReflection*>`，数组每次调用从注册表现查重建 ⇒ **方案 A 的"缓存失效标志"与方案 B 的"复用 `FClassReflection`"都未采用**（前者需要一个 `Deinitialize()` → 生成侧的失效通道，后者要把 `FMethodReflection*` 一并改成弱引用，见本报告 `F-LIFE-002` 的撤销依据）。改动面 = 2 文件 24 增 / 24 删；消费侧（`SetFieldMetaData` 与 6 处调用点）零改动。
+
+⚠️ **本报告原记的后果表述按 [02-…/01](../02-UnrealCSharpCore核心/01-反射注册表FReflectionRegistry.md) 的更正读**：`FReflection::HasAttribute` 只做 `Attributes.Contains(P)` 的**指针相等**比较，命中即指向存活对象，**不是无条件 UAF**；真实后果是**静默元数据丢失**（多数）或**写错元数据**（地址被复用、且恰好命中时）。本行总表 `复核结论` 记「部分确认」即含此意。
+
+**验证**：UBT `UnrealCSharpTestEditor Win64 Development` **Succeeded**；两阶段域重建装置（PIE#1 → `UnrealCSharp.Editor.SetActive 0/1` → PIE#2）**2 × 1704 例 / 0 失败**、与基线仅差已知 4 条 `CSharpNativeEvent*` 新用例、`ensure`/`assert` 0 行；`-game` 回归 **1704 / 0**。
+🔴 **未取得（不得读作"已验证"）**：本报告上面那条"复现用例"（改 C# 动态类特性 → 第 2 次重载）**仍未跑通** —— 本轮 3 次装置尝试（`SetActive 0/1`、无改动 `Compile`、改了 C# 源后 `Compile`）配临时指针同一性探针实测：**探针 460 行全部落在 C# 程序集加载时的那一次生成**（`stale=1` 计数 **0**），三次重载之后都没有再触发生成 ⇒ **本工程当前的动态类型生成只在程序集加载时发生一次**。逐条登记与补证路线见 [`09-问题清单/00-推荐优先修复清单.md`](../../09-问题清单/00-推荐优先修复清单.md) §2.3。
+
 ### P1
 
 #### [F-LIFE-006] 动态类型的静态裸指针注册表永不清理（`NamespaceMap`/`DynamicXMap`/`DynamicXSet`）+ `SDynamicClassViewer` 的 `static TSharedPtr` 进程级单例

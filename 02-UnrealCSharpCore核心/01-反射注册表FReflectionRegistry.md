@@ -270,6 +270,17 @@ void FReflectionRegistry::Deinitialize()
 **验证方式**
 
 - grep 确认无清理：`grep 'MetaDataAttributes' Source/` 只会命中 `FDynamicGeneratorCore.{h,cpp}`，其中**没有任何** `Empty()`/`Reset()`。
+
+**处置（2026-09-22，本轮 G4 收口；✅ 已提交 `8c54c598`）**
+
+采用**上表第 1 条与第 3 条之间的路线** —— 「**去掉缓存本身**」：6 个 getter 去掉函数级 `static`（`static auto& ReflectionRegistry` → `const auto&`、`static TArray<FClassReflection*> X = {…}` → `TArray<FClassReflection*> X = {…}`），返回值由 `const TArray<FClassReflection*>&` 改为 **by-value `TArray<FClassReflection*>`**，数组每次调用从注册表**现查重建**。⇒ 本报告 §上述第 3 点的判据「缓存结构性永不失效」**不再成立**（不是"补了失效钩子"，而是**没有可失效的缓存**）。
+
+- **未采纳第 1 条**（把 6 个数组提升为 `FReflectionRegistry` 成员）：那需要给注册表加 6 个成员 + 6 个访问器，且把"哪些属性类参与元数据下放"这一**生成侧知识**放进注册表；本轮保持生成侧自持。
+- **未采纳第 2 条**（代际号）：同上，需新增公开 API；且"去缓存"已能结构性消除，性能代价可忽略（见下）。
+- **成本**：6 个数组规模 = Property **83** / Function **53** / Class 21 / Struct 5 / Enum 3 / Interface 3（本轮实测计数，`ReflectionRegistry.Get*` 行数），全部是**成员指针读取 + 一次小分配**，调用点在**编辑器侧动态类型生成**路径（每个属性/函数/类型各一次）；同一调用栈里本来就有最多 83 次哈希查表的 `HasAttribute` 循环。**语义零变化**：数组字面量一行未改，返回内容与顺序逐字不变。
+- **改动面**：`Source/UnrealCSharpCore/Public/Dynamic/FDynamicGeneratorCore.h`（6 行声明）+ `Private/Dynamic/FDynamicGeneratorCore.cpp`（6 个 getter）；**消费点 `SetFieldMetaData` 与 6 处调用点零改动**（by-value 临时量绑定 `const TArray<FClassReflection*>&` 形参合法）。净 24 增 / 24 删，补丁留档 `Saved/Retest/fix-G4-metadata-cache.patch`。
+- **验证**：UBT `UnrealCSharpTestEditor Win64 Development` **Succeeded**；两阶段域重建装置（PIE#1 → `UnrealCSharp.Editor.SetActive 0/1` → PIE#2）**2 × 1704 例 / 0 失败**、与基线仅差已知 4 条新用例、`ensure`/`assert` 0 行；`-game` 回归 **1704 / 0**；新增注释/`throw`/日志/`try-catch`/`ensure` 均 0。
+- 🔴 **未取得**：**修复前"陈旧指针"的运行期对照**。3 次装置尝试（`SetActive 0/1`、无改动 `Compile`、改了 C# 源后的 `Compile`）+ 临时指针同一性探针（`[G4PROBE] … cached=%p live=%p stale=%d`，已移除）实测：**460 行探针全部落在 C# 程序集加载时的那一次生成上**（`stale=1` 计数 **0**），三次重载后**均未再触发生成** ⇒ **本工程当前的动态类型生成只在程序集加载时发生一次**。故运行期证据止于"无回归 + 域重建路径跑通"，**不是"复现了旧缺陷"**；后果判定的更正（`HasAttribute` 只做指针相等 ⇒ 多数为**静默元数据丢失**、少数为**写错元数据**）仍是静态推演。**补证路线**：在"改 C# 源 → 编译 → 新程序集加载"的真实热重载下重放同一探针，或按本报告原建议在 `SetFieldMetaData` 内加一次性 `ensure`。逐条登记见 [`09-问题清单/00-推荐优先修复清单.md`](../../09-问题清单/00-推荐优先修复清单.md) §2.3。
 - 用例：编辑器内连续执行两次 C# 热重载，然后比较动态生成的 `UClass` 上的 metadata（如 `GetMetaData(TEXT("ToolTip"))`），第二次会缺失或错误。
 - 断言：在 `SetFieldMetaData`（`:778`）循环内加 `check(!MetaDataAttribute || MetaDataAttribute->GetManagedClass() != InvalidManagedHandle)`；或在 `Deinitialize()` 里断言这 6 个 static 数组为空（当前会失败）。
 

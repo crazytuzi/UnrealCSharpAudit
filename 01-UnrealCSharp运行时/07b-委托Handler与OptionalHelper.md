@@ -1111,6 +1111,8 @@ IManagedHandle FDelegatePropertyDescriptor::NewWeakRef(void* InAddress) const
 
 #### [F-DEL-008] `FOptionalRegistry::RemoveReference` 缺少 `FDomain::GCHandle_Free` → C# GC 句柄泄漏
 
+> ✅ **处置（2026-09-22，G1 首刀轮；已提交 `8c54c598`）**：**已按本报告「建议」施工** —— `FOptionalRegistry.cpp` 的 `RemoveReference` 在 `ManagedHandle2Helper.Remove(InManagedHandle);` 之后补 `FDomain::GCHandle_Free(InManagedHandle);`（该文件 `Deinitialize:31` 本来就有 ⇒ 原状属**同文件内自相矛盾**，本轮对齐）。报告建议的"横向审计其余 11 个注册表"**同轮已做**：`FMultiRegistry.inl` 是另一处真缺口（= `F-REG-007`，同轮一并修复），字符串/容器/委托三族与 `FStructRegistry`/`FObjectRegistry`/`FBindingRegistry` **均有** `GCHandle_Free`。逐条依据见 [`08-…/07`](../08-专项审计/07-G1句柄释放责任归属（2026-09-22）.md) §2/§4。
+
 - **类别**: 内存/资源泄漏（GC 句柄）
 - **严重度**: **P1**（维持）
 - **复核结论**: **确认** —— `FOptionalRegistry::RemoveReference` 缺 `FDomain::GCHandle_Free` 属实，且**同族兄弟注册表提供了对照证据**：字符串/容器注册表的 `RemoveReference` **都做了** 这一步，说明是遗漏而非设计
