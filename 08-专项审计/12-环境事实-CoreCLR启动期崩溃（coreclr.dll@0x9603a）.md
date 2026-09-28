@@ -10,7 +10,7 @@
 >
 > **两处改动（已在工程内生效）**：
 > 1. **代码修复**（✅ **已提交**）：`Plugins/UnrealCSharp/Source/UnrealCSharpCore/Public/Domain/Script/FScriptDomainScope.h`（`git diff --stat` = `+1 / −12`，**纯删除、无新增注释**）——脚本域不再由短生命周期作用域拆毁（消除启动期强推 ALC 卸载）。
->    - **提交：`77867446da413c543dc8bef5751c951a17fe8826`**（**= 当前 HEAD**；作者 `crazytuzi <liuxiangcode@qq.com>`，`2026-09-25 23:43:19 +0800`，subject `DelegateHandle Reset && UFunction RemoveFromRoot`）。该提交含本报告 §4.1 的 `FScriptDomainScope.h`（`1 file changed, 1 insertion(+), 12 deletions(-)`，diff 与 §4.1 完全一致）**外加 G12 收口的 5 个文件** ⇒ 整笔 = **6 文件 `+23/−17`**；A 类修复本身仍**恰好只含这 1 个文件**。
+>    - **提交：`77867446da413c543dc8bef5751c951a17fe8826`**（**= 该笔提交时的 HEAD**；作者 `crazytuzi <liuxiangcode@qq.com>`，`2026-09-25 23:43:19 +0800`，subject `DelegateHandle Reset && UFunction RemoveFromRoot`）。该提交含本报告 §4.1 的 `FScriptDomainScope.h`（`1 file changed, 1 insertion(+), 12 deletions(-)`，diff 与 §4.1 完全一致）**外加 G12 收口的 5 个文件** ⇒ 整笔 = **6 文件 `+23/−17`**；A 类修复本身仍**恰好只含这 1 个文件**。
 > 2. **运行时缓解**（✅ **2026-09-25 已改为随源码分发，并已提交**：子模块 **`1e1cfd99`** + 插件仓指针 **`6e142471`**）：`"System.Runtime.TieredCompilation": false` —— 落点 = **CoreCLR 子模块里被 git 跟踪的 8 份模板** `Source/ThirdParty/CoreCLR/lib/{Release,Debug}/{Win64,Linux_x86_64,macOS_arm64,macOS_x86_64}/CoreCLR.runtimeconfig.json`（消除分层编译后台重 JIT 与代码发布/取消发布的竞态）。
 >    - **原因**：该文件落在插件仓库 `.gitignore` 的 `Binaries/*`（第 47 行）之下 ⇒ **它只是构建产物、不是真值**（`git check-ignore` 命中、`git ls-files` 报 "did not match any file(s) known to git"），**提交 `77867446` 不含它**。✅ **最终落地（§13.3）**：该配置的**源**是 CoreCLR 子模块里被跟踪的 8 份模板（`Source/ThirdParty/CoreCLR/lib/**/CoreCLR.runtimeconfig.json`），改那里才是随源码分发的修法；🟢 **已提交**：子模块 **`1e1cfd99`**（`System.Runtime.TieredCompilation false`，父 `c27d952e`，8 文件 `+14/−6`，2026-09-25 23:25:17 +0800）+ 插件仓指针 **`6e142471`**（父 `0170514d`，`1 file changed, 1 insertion(+), 1 deletion(-)`，指针 `c27d952e` → `1e1cfd99`，2026-09-25 23:26:52 +0800）⇒ **检出这些提交的新环境即可拿到 B 类缓解**（不再只限本机）。
 >
@@ -179,7 +179,7 @@ coreclr!CLRVectoredExceptionHandlerPhase2 / EEPolicy::HandleFatalError+0x129
 
 `Plugins/UnrealCSharp/Source/UnrealCSharpCore/Public/Domain/Script/FScriptDomainScope.h`（`git diff --stat` = `+1 / −12`，纯删除）
 
-**提交**：`77867446da413c543dc8bef5751c951a17fe8826`（**= 当前 HEAD**，`2026-09-25 23:43:19 +0800`，该文件在本笔中为 `1 insertion(+), 12 deletions(-)`）——**实际提交的 diff（原文无注释、无新增头文件）：**
+**提交**：`77867446da413c543dc8bef5751c951a17fe8826`（**= 该笔提交时的 HEAD**，`2026-09-25 23:43:19 +0800`，该文件在本笔中为 `1 insertion(+), 12 deletions(-)`）——**实际提交的 diff（原文无注释、无新增头文件）：**
 
 ```diff
 @@ -17,8 +17,6 @@ public:
@@ -449,7 +449,7 @@ foreach($e in $ev){ $b=$files | Sort-Object { [Math]::Abs(($_.LastWriteTime-$e.T
 
 | 项 | 值 |
 |---|---|
-| 提交 | **`77867446da413c543dc8bef5751c951a17fe8826`**（subject `DelegateHandle Reset && UFunction RemoveFromRoot`，作者 `crazytuzi <liuxiangcode@qq.com>`，`2026-09-25 23:43:19 +0800`，**= 当前 HEAD**）—— **本条（A 类）的代码修复就在这一笔里** |
+| 提交 | **`77867446da413c543dc8bef5751c951a17fe8826`**（subject `DelegateHandle Reset && UFunction RemoveFromRoot`，作者 `crazytuzi <liuxiangcode@qq.com>`，`2026-09-25 23:43:19 +0800`，**= 该笔提交时的 HEAD**）—— **本条（A 类）的代码修复就在这一笔里** |
 | 与 B 类缓解那一笔的分工 | 父提交 **`6e14247199d957d22b0389b7c285da06d34b6a2c`**（subject **`CoreCLR System.Runtime.TieredCompilation false`**）**只做一件事**：把 `Source/ThirdParty/CoreCLR` 指针从 `c27d952e` 改到 **`1e1cfd99`**（`1 file changed, 1 insertion(+), 1 deletion(-)`）⇒ 它是 **B 类缓解**的入口、**不含 A 类修复**；A 类修复全在本行这一笔 |
 | 改动面 | 整笔 = **`6 files changed, 23 insertions(+), 17 deletions(-)`**：其中 A 类修复 = **`1 file changed, 1 insertion(+), 12 deletions(-)`**（唯一文件 `Source/UnrealCSharpCore/Public/Domain/Script/FScriptDomainScope.h`，**纯删除、无新增注释**，diff 与 §4.1 完全一致）+ G12 收口 **5 文件 `+22/−5`**（见 [`08-…/13`](13-G12收口-编辑器对象与委托配对（2026-09-25）.md) §4.1） |
 | 效果 | **A 类 `5/22 ≈ 23%` → `0/215`**；修复后按同一装置另跑 **30 次启动 0 崩溃**、`-game` 全量 **1705 / 1705** |
