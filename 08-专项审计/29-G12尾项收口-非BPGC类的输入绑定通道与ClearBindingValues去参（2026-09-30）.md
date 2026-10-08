@@ -1,6 +1,6 @@
 # G12「尾项」收口轮：非 BPGC 类的输入绑定通道 —— 六个 `Bind*` 改「条目结构体直传」+ `ClearBindingValues` 去参（2026-09-30）
 
-> **分析范围**：[`09-问题清单/00-推荐优先修复清单.md`](../09-问题清单/00-推荐优先修复清单.md) **§2.20** 行末新登记的 **`F-CS2B-032`**（非 BPGC（向导「C++」型）类上六个 `Bind*`/`Remove*` 全程静默 no-op），顺带 **`F-CS2B-025`**（`ClearBindingValues(UObject InObject)` 死参数）。
+> **分析范围**：[`09-问题清单/03-已完成（P0与P1）.md`](../09-问题清单/03-已完成（P0与P1）.md) **§2.20** 行末新登记的 **`F-CS2B-032`**（非 BPGC（向导「C++」型）类上六个 `Bind*`/`Remove*` 全程静默 no-op），顺带 **`F-CS2B-025`**（`ClearBindingValues(UObject InObject)` 死参数）。
 >
 > **覆盖文件**（行号 = 本轮读到的实际内容；插件仓 HEAD = `152b5681`）：
 > **原生** —— `Source/UnrealCSharp/Private/Domain/Interop/FRegisterInputComponent.cpp`（改前全文 681 行）、`FRegisterEnhancedInputComponent.cpp`（全文 236 行）；
