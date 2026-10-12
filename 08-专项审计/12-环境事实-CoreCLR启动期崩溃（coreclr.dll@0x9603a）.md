@@ -491,3 +491,75 @@ foreach($e in $ev){ $b=$files | Sort-Object { [Math]::Abs(($_.LastWriteTime-$e.T
 | 改动是否"泄露"（占位/句柄/内存） | 代码证据齐（§10.2），**仅"内存/句柄随轮次增长"未测量**（建议 1~2 h 长时驻留采样 `WorkingSet64`/`HandleCount`） | §10.2 |
 | 两条未归属同形崩溃（`0x3596cf`） | 未定位；`MSBuild.exe` 的 ~60 次 `OutOfMemoryException` 单独登记 | §11 |
 | 工程侧配置隐患（`Mono.Build.cs:62` 把 CoreCLR 10.0.1 的几个原生库投放到同一目录树） | 建议清理，**未做** | §11 |
+
+---
+
+## 14. 🆕 2026-10-10 追加样本：**同址出现在"套件执行期 · JIT 侧"**（4 例；B 类缓解已部署仍复现）
+
+> **来源**：轮 B-4 / B-6 / B-7（[`08-…/44`](44-轮B4收口-绑定物化产物归属与属性类型不匹配取证（2026-10-10）.md) / [`08-…/45`](45-轮B5收口-多引用属性空值读回与可达性更正（2026-10-10）.md)）。**这些样本不属于 A/B/C 三类中的任何一类**（见 §14.3），按 §13.2 的规则（"A/B 类再出现应按新缺陷处理"）需单独看 ⇒ **并入本文**（同一签名家族），而不是另开新条目。
+
+### 14.1 四例（全部落在"`dotnet build` 之后的首跑"）
+
+| # | 时刻 | 装置 | 现象 |
+|---|---|---|---|
+| 1 | 17:28（`b4-pre2-r01`） | `-game -nullrhi -nosound -AutoQuit` | exit `0xC0000005`、**无 CSV**、日志截断在套件中途 |
+| 2 | 17:33（`b4-pre3-r01`） | 同上 | 同上（`LogUnrealCSharp` 37 行） |
+| 3 | 19:13（`b6-final-r01`） | 同上 | 同上（`LogUnrealCSharp` 16 行） |
+| 4 | 19:45（`b7-loop4-r01`） | 同上（复现循环第 4 轮） | 同上 |
+
+| 对照 | 计数 |
+|---|---|
+| **"`dotnet build` 之后的首跑"** | **19 次中 4 次崩溃（≈21%）** |
+| 其余运行（未紧跟重建） | **13 次 0 崩溃** |
+
+⇒ 与 §13 的 "A/B 类 `0/215`" 不同，**本形态在"重建后首跑"上约 1/5 复现**。**复现配方**：`dotnet build Script/Script.sln -c Debug` ⇒ **立刻只跑 1 轮** `run-batch.ps1 -Runs 1 … -AutoQuit`（第 2 轮通常正常）。
+
+### 14.2 转储证据（🆕 首次拿到本形态的调用链）
+
+转储由既有装置落盘：`Saved/Retest/crashes/UnrealEditor.exe.54812.dmp`（40.4 MB）；解栈命令 = `Saved/Retest/tools/SymTool/bin/SymTool.exe dump <dmp> --all-threads`：
+
+```
+EXCEPTION : 0xC0000005 flags=0x1 at 0x37C1603A (coreclr.dll+0x9603A)  [READ at 0x20]
+          : coreclr.dll+0x9603A  ?+0x0
+=== THREAD 17292 ===
+  rip symbol: KERNELBASE.dll+0x10A818  RaiseFailFastException+0x188
+   [0x8827D908]  coreclr.dll+0x28AC66  GetCLRRuntimeHost+0xD866
+   [0x8827D938]  ucrtbase.dll+0x12D7B  free_base+0x1B
+   [0x8827D968]  coreclr.dll+0x2C6F54  GetCLRRuntimeHost+0x49B54
+   [0x8827D9B0…] coreclr.dll+0x444800  CLRJitAttachState+0xE7D0   （栈上连续 7 个槽）
+   [0x8827D9E8]  clrjit.dll+0xD77F2
+   [0x8827DBE8]  coreclr.dll+0x1D216
+   [0x8827DCE8]  clrjit.dll+0x59A5F
+   [0x8827E038]  clrjit.dll+0x107135
+   [0x8827E088]  clrjit.dll+0x109A7E
+   [0x8827E0B8]  clrjit.dll+0x10AA47
+   [0x8827E238]  clrjit.dll+0x10C904
+   [0x8827E288]  clrjit.dll+0x6263E3 …（`clrjit.dll` 占满故障线程栈）
+```
+**读法**：① 崩溃地址与本文 A/C 类**同一处**（`coreclr.dll+0x9603A` = `UnwindInfoTable::UnpublishUnwindInfoForMethod+0x52`，§3 的符号化仍适用）；② 但**故障线程的栈被 `clrjit.dll` 占满 ⇒ 崩溃发生在"JIT 编译期"**（unwind info 的发布/撤销正在这条路径上）；③ 栈顶 `RaiseFailFastException` ⇒ **被转成 fail-fast**（这正是"**无 `Saved/Crashes` 目录、无 CSV**"的原因：UE 的崩溃上报没被走到）；④ `READ at 0x20` = 空基址 + 偏移读取。
+
+### 14.3 分类结论
+
+| 判据（`classify-crashes.ps1` 口径 + 本装置实测） | 本样本 |
+|---|---|
+| `LogUnrealCSharp` 行数 | **16 / 37 / 16**（> 0 ⇒ **插件已启动**；同装置成功运行 = 139 行、总行 1018） |
+| 阶段 | **套件执行期**（日志截断在套件中途，总行 845~878） |
+| 故障模块 | `coreclr.dll`（**不是** B 类的 `clrjit.dll`；但**故障线程栈在 clrjit 内**） |
+| ⇒ 归类 | **A 类 ✗（非启动期）· B 类 △（同在 JIT 路径，故障模块不同）· C 类 ✗（插件已启动）** ⇒ **同签名第四形态：「套件执行期 · JIT 侧」** |
+
+### 14.4 🔴 B 类缓解的现状核对（与 §13.3 的关系）
+
+| 检查 | 结果 |
+|---|---|
+| 部署副本 `Plugins/UnrealCSharp/Binaries/Win64/CoreCLR.runtimeconfig.json` | ✅ 含 `"System.Runtime.TieredCompilation": false` |
+| 子模块 8 份模板（`Source/ThirdParty/CoreCLR/lib/{Release,Debug}/{Win64,Linux_x86_64,macOS_arm64,macOS_x86_64}/`） | ✅ **8/8** 均含该设置 |
+
+⇒ **§13.3 的 B 类缓解确实已部署**，但本形态**仍复现**（4 例）⇒ 两点含义：① "B 类 `0/215`" **只在 2026-09-25 当时那个形态下成立**，对"重建后首跑 + 套件期 JIT"这一形态**不再充分**；② **关掉分层编译 ≠ 关掉 JIT** ⇒ `UnwindInfoTable` 这条路径仍会被走到。
+
+### 14.5 未取得 / 建议
+
+| 项 | 状态 |
+|---|---|
+| "哪个方法在 JIT/unwind-info 撤销时踩空" | **未取得**（需 coreclr 8.0.5 的 PDB + 原生调试器解 `UnwindInfoTable` 内部状态；本机既无 cdb/windbg、也无本地 PDB） |
+| "重建后首跑"为何更易触发 | **未确证**（候选：新程序集 ⇒ 首跑 JIT 量最大；构建后的文件 I/O 与安全软件扫描叠加。**相关不等于因果**，但 4/19 vs 0/13 的计数已记在 §14.1） |
+| 建议 | ① 把"重建后首跑"当**已知易触发窗口**：CI 与本地验证都跑 2 轮（或首跑崩溃后按本形态重跑一次）；② 若要继续深挖，按 §10.3 第 1 条（完整转储 `DumpType=2` + 原生调试器）在**本形态**上做一次 —— 本文 §14.2 已给出 dump 路径与解栈命令 |
