@@ -1734,4 +1734,20 @@ FString FCSharpCompileProgress::GetStage() const
 3. **`F-CMP-031` 引用的引擎 `TaskGraph.cpp:1447-1460`/`:1480-1487`** 未回源码逐行核对（该条已裁定为**非缺陷**，故此核对不影响待修项）。
 4. **`F-CMP-013` 的引擎新证据已改写其前提**：`Engine\Source\Programs\UnrealBuildTool\Platform\Windows\UEBuildWindows.cs:574 public bool bUpdatedCPPMacro = true;` ——默认开启，故该条已由 P2 下调 P3、可达性改为**潜伏**。
 
+---
+
+## 附：追加注记（轮 B-29，2026-10-16 —— 跨版本宏从 101 增至 104）
+
+> **本注记由轮 B-29 追加**，不改动正文任何结论；正文 §0 覆盖表的"`UEVersion.h` 206 行 / **101 个宏**"是**审计基线**的快照 ⇒ 轮 B-29 前的 HEAD（`df487a6d`）为 **208 行 / 102 个宏**，追加 3 个宏后为 **214 行 / 105 个宏**（用 `^#define ` 计数）。
+
+维护者用 **UE 5.0** 编译时一次报出 8 条 error（→ [`08-…/69`](../08-专项审计/69-跨版本编译兼容收口-UE5.0八处报错与版本门控（2026-10-16）.md)），其中 **3 条需要新门控宏**，已按本报告记录的宏命名/分组约定（按版本升序、`UE_F_*` 特性 / `UE_U_*` UClass 成员）插入 `UEVersion.h`：
+
+| 新宏 | 值 | 边界依据（逐 tag 取头文件） |
+|---|---|---|
+| `UE_F_ENHANCED_INPUT_ACTION_EVENT_BINDING_IS_BOUND_TO_OBJECT` | `UE_VERSION_START(5, 1, 0)` | `FEnhancedInputActionEventBinding` 上的 `IsBoundToObject(...)` 自 **5.1** 起存在（5.1–5.5 形参 `void const*`；**5.6** 起形参改 `FDelegateUserObjectConst` 并**新增** `GetUObject()`） |
+| `UE_U_USER_WIDGET_UPDATE_CAN_TICK` | `UE_VERSION_START(5, 1, 0)` | `UUserWidget::UpdateCanTick()` 5.0 位于 **private** 段（5.0.3 `UserWidget.h:1440`），**5.1** 起 public（5.1.1 `:238`） |
+| `UE_F_ARRAY_REMOVE_AT_E_ALLOW_SHRINKING` | `UE_VERSION_START(5, 4, 0)` | `Containers/AllowShrinking.h` 与 `TArray::RemoveAt(SizeType, EAllowShrinking)` 均 **5.4.0** 引入；⚠️ **`FString` 侧对应重载是 5.5**（正文已有的 `UE_F_STRING_REMOVE_AT_E_ALLOW_SHRINKING` 不动） |
+
+🔴 **同时更正正文 §3 的一条隐含前提**：本报告 §1.1/§3 提到的"插件支持 **UE 5.0–5.8**"在**语言标准**上还有一层 —— **UE 5.0–5.2 默认 C++17**（5.0.3 `Platform/Windows/VCToolChain.cs:765` 只加 `/std:c++17`，`/std:c++20` 被注释；5.3 起 `BuildSettingsVersion.V4` 起默认 C++20）⇒ **插件源码必须保持 C++17 可编**（`[=, this]`、带初始化语句的 range-for 都是 C++20 语法，5.0 上直接报 C3791/C7585）。📌 **该前提已升格为硬规范**：[`_CONVENTIONS.md`](../_CONVENTIONS.md) **§7「新调用的接口先做版本兼容性检测」**（2026-10-16 轮 B-29 确立）—— 今后**任何新增/改动的引擎接口调用与新写法，落地前都必须给出"最低支持版本"依据**，并在**最低支持版本上真编一次**；配套三模式装置 `Saved/Retest/b29-xversion-lint.ps1`（`Syntax` 语言标准面 / `Symbol` 首个 tag / `Access` 可见性）。**该轮改动已提交 `a9e10378636504f55e9bee4f376d944c918d16e0`**（父 `df487a6d`，本轮 8 文件 `+43/−9`，blob 与已验证工作树逐一相同、零调整；提交级补丁 `Saved/Retest/fix-a9e10378.patch`，本轮 8 文件补丁 `Saved/Retest/fix-B29-xversion-ue50.patch`）。
+
 

@@ -172,3 +172,126 @@ UnrealCSharpAudit/
 - `grep` 的 `include` 参数只接受**一个** glob，不支持列表；需要多后缀时多次调用。
 - 行号从 `read` 输出里抄，不要自己数。
 - 报告写完后，**在最终消息里**给出：报告路径、发现数量（按严重度分）、最重要的 3 条发现的一句话摘要、以及任何未能覆盖的部分。
+
+---
+
+## 7. 【硬规范】新调用的接口：先做版本兼容性检测，再落地（2026-10-16 由轮 B-29 确立）
+
+> **一句话**：插件的支持区间是 **UE 5.0–5.8**、且必须 **C++17 可编**；因此**任何新增或改动的引擎接口调用（函数/方法/枚举值/类型/宏/include 路径）与任何新写法（语法、模板用法），在落地前都必须逐条给出"最低支持版本"依据**。拿不出依据 = 不许合入。
+> 🔴 **"本机 5.6 编得过"不是依据**：轮 B-29 的 8 条编译错误（[`08-…/69`](08-专项审计/69-跨版本编译兼容收口-UE5.0八处报错与版本门控（2026-10-16）.md)）在 5.6 / C++20 上**一条都不出现**——它们只在 **UE 5.0** 上暴露。审计库此前所有报告都在 5.6 上完成，因此"跨版本通用"的表述此前都只是**头文件级推断**。
+
+### 7.1 每处新调用必做三步
+
+| 步 | 做什么 | 证据要求 |
+|---|---|---|
+| **1. 查可用性** | 该符号在**哪个 release tag 首次出现**；以及**可见性**（`public`/`protected`/`private`） | **有符号 ≠ 可调用**：`UUserWidget::UpdateCanTick()` 在 5.0.0–5.0.3 **存在但为 private**（5.1 起才 public）；`FEnhancedInputActionEventBinding::GetUObject()` **5.6.0 才出现** |
+| **2. 查值类别 / 重载 / 形参位置** | 同一签名在不同版本对**实参值类别**（左值/右值/`const`）与**重载选择**可能不同 ⇒ 不能只看"函数名存在" | 实例 A：`TUniqueFunction` 在 **5.0–5.4** 只有 `explicit TFunction_UniqueOwnedObject(T&&)`（仅右值），**5.5** 起重构后才接受 const 左值 ⇒ `FFunctionGraphTask::CreateAndDispatchWhenReady(Reload, …)` 在 5.0 报 C2665。实例 B：`TArray::RemoveAt(Index, false)` 在 5.0 把 `false` 当 **`Count`**（第 2 形参）⇒ `static_assert('unexpected bool passed as the Count argument')`，而 `FString` 的 bool 在**别的形参位置**，**先例不可照抄** |
+| **3. 处置（优先级从高到低）** | 见下表 | —— |
+
+**处置选项（按优先级）**
+
+| 选项 | 何时用 | 要求 |
+|---|---|---|
+| **a. 两版通用写法**（首选，**零门控**） | 存在一种写法在最低版与最高版都合法 | 必须**同一份代码在两个版本都编过**。例：`[this]`（替 `[=, this]`）、`MoveTemp(Reload)`、把 range-for 的 init-statement 提为独立语句、`RemoveAt(Index, 1, false)` |
+| **b. 门控宏** | 旧版**没有**等价 API/成员 | 宏**必须**落在 `Source/CrossVersion/Public/UEVersion.h`，**按版本升序分组**，命名 `UE_F_*`（特性）/`UE_E_*`（枚举值）/`UE_U_*`（UClass 成员）/`UE_T_*`（模板）；`#if` 两侧都必须是**可编译**的完整分支；🔴 **旧版分支的实参要逐形参核对**（见 7.1 步 2 实例 B） |
+| **c. 回退（旧版无等价能力）** | 公开 API 也没有 | 用**公开 API 等效复刻**（例：5.0 的 `UpdateCanTick` 等效 = `GetDesiredTickFrequency() != Never` ⇒ `GetCachedWidget()->SetCanTick(true)`），或**显式退化**（例：5.0 的增强输入幂等守卫退化为 `(action, trigger)` 匹配）——**必须在报告里写清"退化点 + 精度损失 + 未验证部分"**，**禁止静默降级** |
+| **d. 记为未取得项** | 上述都不可行 | 如实登记，**不得**用私有成员/`AccessPrivate` 等 hack 绕过（该路线已有裁定：不可替换、不新增） |
+
+### 7.2 语言标准面（机械可查，必须 CLEAN）
+
+```powershell
+# 新增行专用（<rev> = 本轮基线提交）
+& 'D:\file\UnrealProjects\UnrealCSharpTest\Saved\Retest\b29-xversion-lint.ps1' -Mode Syntax -DiffBase <rev>
+# 全树体检
+& '...\b29-xversion-lint.ps1' -Mode Syntax
+```
+
+- **UE 5.0–5.2 默认 C++17**（5.0.3 `VCToolChain.cs:765` 只加 `/std:c++17`，`/std:c++20` 被注释；5.3 起 `BuildSettingsVersion.V4` 起默认 C++20）⇒ **未门控代码与门控的旧版分支必须 C++17-clean**。
+- 内置 C++20-only 清单：`[=, this]` / `[&, this]`、**带初始化语句的 range-for**、`consteval`/`constinit`、协程（`co_await`/`co_return`）、`std::span`/`std::bit_cast`、`<=>`、`[[likely]]`/`[[unlikely]]`、`char8_t`。
+- **`#if STD_CPP_20` 分支内的 C++20 语法是允许的**（脚本会自动跳过并给出 `note: N hit(s) skipped`）；这正是 `FBindingClassRegister.cpp:116-120` 的既有形态。
+
+### 7.3 版本查证装置（本机已具备）
+
+```powershell
+$lint = 'D:\file\UnrealProjects\UnrealCSharpTest\Saved\Retest\b29-xversion-lint.ps1'
+# 支持起点：扫全部 32 个 release tag（5.0.0 … 5.8.3），给出首次出现的 tag
+& $lint -Mode Symbol -Path <引擎仓内相对路径> -Symbol '<正则>'
+# 可见性：给出该符号在各 tag 的 public/protected/private 与"可见性变化发生在哪个 tag"
+& $lint -Mode Access -Path <引擎仓内相对路径> -Symbol '<正则>'
+```
+
+- 引擎源码仓：`D:\file\UnrealEngine\Release`（带 **5.0.0–5.8.3 全 32 个 `*-release` tag**）；等价的裸命令是 `git show <tag>:<path>`。
+- **必须把"首个 tag + 可见性"抄进报告**，不能只写"较新版本"。
+
+### 7.4 强制验证：**最低支持版本上必须真编一次**
+
+- 报告里原有的"交付前格式与规范核查"一节**新增子项**：**版本兼容性核查表**
+
+  | 接口/写法 | 最低支持版本 | 依据（tag + 路径:行） | 处置（通用/门控/回退） | 5.0 实编读数 |
+  |---|---|---|---|---|
+
+- **装置（本机已具备）**：最小 5.0 工程 `D:\file\UnrealProjects\UE50Check`
+  - `.uplugin` = 本仓副本**去掉 `SourceCodeGenerator` 模块条目**（该模块是 **5.5+ 的 UBT 插件** `*.ubtplugin.csproj`，5.0 的 UBT 报 `Could not find definition for module 'SourceCodeGenerator'`）；
+  - `Plugins/UnrealCSharp/Source`、`/Script` 用**目录 junction** 指回本仓 ⇒ 编的是同一份源码，**产物写在检查工程内**，不动本仓 5.6 的 `Binaries/Intermediate`；
+  - 命令：`D:\file\UnrealEngine\5.0\Engine\Build\BatchFiles\Build.bat UE50CheckEditor Win64 Development -Project="D:\file\UnrealProjects\UE50Check\UE50Check.uproject" -WaitMutex`（首次会重建 5.0 引擎模块 ≈ 2950 actions；之后增量约 1–2 分钟）。
+- 5.6 侧仍按常规判据：Windows UBT **Succeeded** ＋ 套件与基线**同 CSV SHA** ＋ 产物 manifest **0 差异**。
+
+### 7.5 适用范围与例外
+
+- **适用**：`Source/**` 全部 7 个模块 ＋ `Script/**`（C# 侧若引用有版本要求的 .NET/引擎 API，同样登记）。
+- **不适用**：`Source/ThirdParty/**`（子模块，不分析）；插件**自定义**的类/宏/接口（只需保证仓内一致）。
+- **裁定权**：退化或例外（选项 c）需在报告里单列，必要时走待决策页（参照 [`08-…/66`](08-专项审计/66-待决策页-三问（Q1四路线·Q2口径例外·Q3失败判据）（2026-10-15）.md) 的"口径例外"流程）。
+- **首次案例**：轮 B-29 —— 8 条 5.0 编译错误 → 6 类根因 → 3 个新宏 → 5.0 实编（还当场抓出 1 处自伤）。
+
+---
+
+## 8. 【硬规范】每轮改完代码后：交付前复核「项目规范 / 代码风格 / 要不要格式化」（2026-10-16 维护者要求）
+
+> **一句话**：**只要本轮动过插件源码（`Source/**`、`Script/**`），在收口报告成稿前必须做一次交付前复核**，覆盖下面三个轴，并**把读数写进报告**（沿用既有子节标题「交付前格式与规范核查」，口径源自 B-21 §21.3 → B-22 §3.4 → B-23 §3.5）。🔴 **不满足的需要满足**：任一 FAIL 必须**先修到 PASS 再收口**；确实无法满足的（例如引擎既有写法与项目风格冲突）必须在报告里**单列 + 说明原因**，不能沉默放过。
+
+### 8.1 三个轴（缺一不可）
+
+| 轴 | 查什么 | 判定 |
+|---|---|---|
+| **A. 项目规范（口径）** | ① G7：**不新增**注释 / 日志 / `throw` / `try-catch` / `ensure` / `check` / 公开 API；② Q2：失败必须**收敛到既有值域**（不得静默降级）；③ **代码形态**：新加逻辑走 `if(条件)` ＋ **单一出口**（B-17 规范）、局部变量**直接声明**（B-10 规范）；④ **新增接口的版本兼容**（§7 三步 ＋ 门控宏命名/分组）；⑤ 命名与既有 API 用语一致 | 逐条对照；新增行数、注释数、日志数等**机械计数**要贴出来 |
+| **B. 代码风格** | ① **缩进**：C++（`.cpp/.h/.inl`）**TAB-first**；C# **4 空格**（TAB 在 `.cs` 里即 FAIL）；`TAB + 空格` 的**对齐续行**是合法形（先例：`TDefaultArgument.inl:38-44`）；② **行尾空白 = 0**；③ **行宽**：新增行 **>110 列 = 0 处**，且文件**最大行宽不得变差**；④ **BOM / 行尾符**与该文件基线一致（插件 C++ 交付态为 **CRLF、无 BOM**）；⑤ `git diff --check` **exit 0**；⑥ **不做与改动无关的重排**（diff 只含语义改动） | 逐文件读数表（下节装置直接产出） |
+| **C. 要不要代码格式化** | **先判定仓内有无格式化配置**：`.clang-format` / `.clang-tidy` / `.editorconfig` / `.gitattributes` / C# 的 `dotnet format` 配置。**2026-10-16 全树复核结论：一份都没有** ⇒ **不跑格式化器、不做全树重排**，只做 B 的对照式核查，并在报告里写明这一判定。**一旦将来加入任一配置，本轴即改为"必须按配置运行后再交付"**（配置变更本身也要在此节登记） | 给出"有无配置"的判定 ＋ 复查命令 |
+
+### 8.2 机械装置（每个改动文件一行读数）
+
+```powershell
+$style = 'D:\file\UnrealProjects\UnrealCSharpTest\Saved\Retest\b30-style-lint.ps1'
+& $style -Base <本轮基线 rev>                    # 工作树 vs 基线
+& $style -Base <基线 rev> -Target <交付 rev>      # 提交对提交（收口时用）
+```
+
+逐文件输出：`Added / Indent / Trailing / SpaceFail / SpaceAlgn / TabInCs / AlignTS / OverWidth / AddedMax / BaseMax / EOL / BOM / Comments / Verdict`，并汇总 `git diff --check`、新增注释行清单、以及"是否需要格式化"的结论；**`result: PASS` 才算过**。
+
+**装置自检（2026-10-16，双向）**
+
+| 自检 | 输入 | 读数 |
+|---|---|---|
+| 正向 | `-Base df487a6d -Target a9e10378`（交付的 12 个文件） | **PASS**：Trailing 0 / SpaceFail 0 / OverWidth 0 / AlignTS 4（`#if` 分支内的合法对齐）/ EOL **CRLF** / BOM **no** / Comments **0** / `diff --check` exit 0 |
+| 负向 | 向 `FSetHelper.cpp` 注入 3 类违规（4 空格缩进行、行尾空格、135 列超宽行） | **FAIL**：Trailing **1** / SpaceFail **1** / OverWidth **1** / AddedMax 135 ＋ `diff --check` 报 `:231: trailing whitespace` ⇒ 修回后文件 blob 与基线**逐一相同** |
+
+### 8.3 报告必录
+
+1. **三轴读数表**（A 用计数 ＋ 逐条对照；B 直接贴装置输出；C 给出"有无格式化配置"的判定）。
+2. **装置的完整输出**（或落盘日志路径，如 `Saved/Retest/out/style-<tag>.log`）。
+3. **判定句**：是否需要格式化、是否有 FAIL、FAIL 如何修到 PASS（或为何无法满足并单列）。
+
+### 8.4 适用范围
+
+- **适用**：任何改动 `Source/**` 或 `Script/**` 的轮次（含只改 1 行的轮次）。
+- **可叠加**：与 §7 的版本兼容核查**并行执行**（`b29-xversion-lint.ps1 -Mode Syntax -DiffBase <rev>` 覆盖语言标准面，本节的 B 轴覆盖排版面；两者都要求 `CLEAN` / `PASS`）。
+- **纯文档轮次**（只改审计库 `.md`）：不触发本节，但仍须保证文档自身 **CRLF / 无 BOM / 无乱码**（既有惯例）。
+
+---
+
+## 9. 版本记录
+
+| 日期 | 变更 |
+|---|---|
+| 2026-10-16 | 新增 **§7【硬规范】新调用的接口先做版本兼容性检测**（轮 B-29 确立）；配套装置 `Saved/Retest/b29-xversion-lint.ps1`（`Syntax`/`Symbol`/`Access` 三模式）与最小 5.0 检查工程 `D:\file\UnrealProjects\UE50Check` |
+| 2026-10-16 | 规范首个落地案例（轮 B-29，8 文件 `+43/−9`）**已提交 `a9e10378636504f55e9bee4f376d944c918d16e0`**（父 `df487a6d`；blob 与已验证工作树逐一相同、零调整；提交级补丁 `Saved/Retest/fix-a9e10378.patch` `4C58F788…`）⇒ 本规范的"支持起点 + 门控宏 + 最低版本实编"三件套已完成一次端到端闭环 |
+| 2026-10-16 | 新增 **§8【硬规范】每轮改完代码后：交付前复核「项目规范 / 代码风格 / 要不要格式化」**（维护者要求；三轴 ＋ 不满足必须修到 PASS）；配套装置 `Saved/Retest/b30-style-lint.ps1`（逐文件风格读数 ＋ `git diff --check` ＋ 新增注释清单 ＋ 格式化判定；正/负双向自检通过）；原 §8 版本记录顺延为 **§9** |
